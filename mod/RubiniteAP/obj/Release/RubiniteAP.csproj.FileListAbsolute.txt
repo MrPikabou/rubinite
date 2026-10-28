@@ -1,0 +1,6 @@
+C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\bin\Release\RubiniteAP.deps.json
+C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\bin\Release\RubiniteAP.dll
+C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Release\RubiniteAP.csproj.AssemblyReference.cache
+C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Release\RubiniteAP.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Release\RubiniteAP.csproj.CoreCompileInputs.cache
+C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Release\RubiniteAP.dll
