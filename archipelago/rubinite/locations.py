@@ -30,6 +30,13 @@ class RubiniteLocation(Location):
 
 
 def create_all_locations(world: RubiniteWorld) -> None:
+    enabled_checks = world.get_enabled_check_types()
+    for _key, boss_name, _level, _sigil in data.BOSSES:
+        region = world.get_region(boss_name)
+        for suffix, _slug in enabled_checks:
+            name = data.location_name(boss_name, suffix)
+            region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
+
     goal_key = world.get_goal_boss_key()
     goal_boss_name = next(name for key, name, _l, _s in data.BOSSES if key == goal_key)
     goal_region = world.get_region(goal_boss_name)

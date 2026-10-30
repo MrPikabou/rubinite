@@ -109,7 +109,28 @@ namespace RubiniteAP
             {
                 _goalBossKey = goalFromSlot;
                 AddLog("Goal boss: " + _goalBossKey);
-            }   
+            }
+
+            _enabledChecks.Clear();
+            if (info.SlotData?["enabled_checks"] is JArray enabledArray)
+            {
+                foreach (var item in enabledArray)
+                {
+                    var slug = item?.ToString();
+                    if (!string.IsNullOrEmpty(slug))
+                        _enabledChecks.Add(slug);
+                }
+            }
+            else
+            {
+                // Fallback for older seeds (version 1): enable all optional checks.
+                _enabledChecks.Add("first");
+                _enabledChecks.Add("nohit");
+                _enabledChecks.Add("notalisman");
+                _enabledChecks.Add("flawless");
+                _enabledChecks.Add("srank");
+            }
+            AddLog("Enabled checks: " + string.Join(", ", _enabledChecks));
 
             State.AddChecked(info.CheckedLocations);
             State.Save();
@@ -570,10 +591,14 @@ namespace RubiniteAP
             }
 
             var ids = new List<long> { boss.LocationBase };
-            if (noHit) ids.Add(boss.LocationBase + 1);
-            if (noTalisman) ids.Add(boss.LocationBase + 2);
-            if (flawless) ids.Add(boss.LocationBase + 3);
-            if (sRank) ids.Add(boss.LocationBase + 4);
+            if (noHit && _enabledChecks.Contains("nohit"))
+                ids.Add(boss.LocationBase + 1);
+            if (noTalisman && _enabledChecks.Contains("notalisman"))
+                ids.Add(boss.LocationBase + 2);
+            if (flawless && _enabledChecks.Contains("flawless"))
+                ids.Add(boss.LocationBase + 3);
+            if (sRank && _enabledChecks.Contains("srank"))
+                ids.Add(boss.LocationBase + 4);
 
             var newIds = new List<long>();
             foreach (var id in ids)

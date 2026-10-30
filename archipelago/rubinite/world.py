@@ -43,11 +43,14 @@ class RubiniteWorld(World):
         return items.get_random_filler_item_name(self)
 
     def fill_slot_data(self) -> Mapping[str, Any]:
+        enabled_checks = self.get_enabled_check_types()
+        enabled_slugs = [slug for _suffix, slug in enabled_checks]
+
         boss_data = []
-        for key, name, level, sigil in data.BOSSES:
+        for key, name, level, _sigil in data.BOSSES:
             location_ids = {
                 slug: locations.LOCATION_NAME_TO_ID[data.location_name(name, suffix)]
-                for suffix, slug in data.CHECK_TYPES
+                for suffix, slug in enabled_checks
             }
             is_starting = key in self._starting_boss_keys
             boss_data.append(
@@ -61,11 +64,12 @@ class RubiniteWorld(World):
                 }
             )
         return {
-            "version": 1,
+            "version": 2,
             "goal_boss": self.get_goal_boss_key(),
             "item_ids": items.ITEM_NAME_TO_ID,
             "bosses": boss_data,
             "boss_scene_map": self._boss_scene_map,
+            "enabled_checks": enabled_slugs,
         }
     
     def generate_early(self) -> None:
@@ -127,3 +131,16 @@ class RubiniteWorld(World):
         if 0 <= value < len(keys):
             return keys[value]
         return "Witch2"
+    
+    def get_enabled_check_types(self) -> list[tuple[str, str]]:
+        """Return the check types enabled for this seed. 'First Clear' is always on."""
+        enabled: list[tuple[str, str]] = [("First Clear", "first")]
+        if self.options.enable_nohit_clear.value:
+            enabled.append(("No-Hit Clear", "nohit"))
+        if self.options.enable_notalisman_clear.value:
+            enabled.append(("No-Talisman Clear", "notalisman"))
+        if self.options.enable_flawless_clear.value:
+            enabled.append(("Flawless Clear", "flawless"))
+        if self.options.enable_srank_clear.value:
+            enabled.append(("S-Rank Clear", "srank"))
+        return enabled

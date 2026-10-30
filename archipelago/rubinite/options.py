@@ -47,13 +47,41 @@ class StartingBossSelection(Choice):
     default = 0
 
 
+class EnableNoHitClear(Toggle):
+    """Enable the No-Hit Clear check for each boss."""
+    display_name = "Enable No-Hit Clear"
+    default = True
+
+
+class EnableNoTalismanClear(Toggle):
+    """Enable the No-Talisman Clear check for each boss."""
+    display_name = "Enable No-Talisman Clear"
+    default = False
+
+
+class EnableFlawlessClear(Toggle):
+    """Enable the Flawless Clear check (No-Hit + No-Talisman) for each boss."""
+    display_name = "Enable Flawless Clear"
+    default = False
+
+
+class EnableSRankClear(Toggle):
+    """Enable the S-Rank Clear check for each boss."""
+    display_name = "Enable S-Rank Clear"
+    default = False
+
+
 @dataclass
 class RubiniteOptions(PerGameCommonOptions):
     boss_shuffle: BossShuffle
     goal_boss: GoalBoss
     starting_boss_count: StartingBossCount
     starting_boss_selection: StartingBossSelection
-    
-    # Following are placeholder for more options to be added later:
+    enable_nohit_clear: EnableNoHitClear
+    enable_notalisman_clear: EnableNoTalismanClear
+    enable_flawless_clear: EnableFlawlessClear
+    enable_srank_clear: EnableSRankClear
+
+    # Placeholders for more options to be added later:
     # player_color: PlayerColor
     # world_switch: WorldSwitch

@@ -6,9 +6,10 @@ Everything in this module is derived from the retail game's own ScriptableObject
 
 from __future__ import annotations
 
-# The challenge area exposes one portal per boss. The first four bosses in this list
-# are available from the start in vanilla. StartingBossCount / StartingBossSelection
-# control how many and which portals are actually unlocked at the beginning of an AP run.
+# The first four entries (Beast, Guardian, Cult, Gravekeeper) can be promoted to
+# starting bosses via StartingBossCount / StartingBossSelection. In vanilla, only
+# Beast and Guardian are free; Cult and Gravekeeper keep their sigils so that they
+# can also be progression-gated when StartingBossCount is small.
 BOSSES = [
     # key, display name, level scene, required sigil (None = available from the start)
     ("Beast", "The Beast", "BeastLevel", None), # "Beast Sigil"
@@ -26,7 +27,21 @@ BOSSES = [
     ("Witch2", "Alcina, True Form", "WitchLevel", "Witch II Sigil"),
 ]
 
+
+# Fallback sigil names for the bosses that don't need a sigil.
+# These are added as items only if the boss, due to randomization,
+# is NO LONGER one of the starting bosses.
+BOSS_SIGIL_FALLBACK = {
+    "Beast": "Beast Sigil",
+    "Guardian": "Guardian Sigil",
+    # Cult and Gravekeeper currently have sigils in BOSSES, so these fallbacks are
+    # unreachable. Kept for symmetry / future-proofing.
+    "Cult": "Cult Sigil",
+    "Gravekeeper": "Gravekeeper Sigil",
+}
+
 GOAL_BOSS_LEVEL = "WitchLevel"
+
 
 # Five checks per boss. Only the first clear may hold progression items; the four
 # challenge clears are optional skill checks and are kept free of progression.
@@ -103,25 +118,6 @@ SKILLS = [
 FILLER_ITEM = "Blood Dust"
 
 
-# Fallback sigil names for the bosses that don't need a sigil.
-# These are added as items only if the boss, due to randomization,
-# is NO LONGER one of the starting bosses.
-BOSS_SIGIL_FALLBACK = {
-    "Beast": "Beast Sigil",
-    "Guardian": "Guardian Sigil",
-    "Cult": "Cult Sigil",
-    "Gravekeeper": "Gravekeeper Sigil",
-}
-
-
-def sigil_for_boss_key_or_fallback(key: str) -> str | None:
-    """Delivers a boss's sigil, including a fallback for the starting bosses."""
-    for k, _n, _l, sigil in BOSSES:
-        if k == key:
-            return sigil if sigil else BOSS_SIGIL_FALLBACK.get(key)
-    return None
-
-
 # Base IDs. Location and item ranges are intentionally separate.
 LOCATION_BASE = 71000
 SIGIL_ITEM_BASE = 72000
@@ -156,8 +152,9 @@ def boss_for_level(level: str) -> tuple | None:
     return None
 
 
-def sigil_for_boss_key(key: str) -> str | None:
+def sigil_for_boss_key_or_fallback(key: str) -> str | None:
+    """Delivers a boss's sigil, including a fallback for the starting bosses."""
     for k, _n, _l, sigil in BOSSES:
         if k == key:
-            return sigil
+            return sigil if sigil else BOSS_SIGIL_FALLBACK.get(key)
     return None
