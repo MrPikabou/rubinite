@@ -12,14 +12,27 @@ if TYPE_CHECKING:
     from .world import RubiniteWorld
 
 
+# All 13 possible sigils, explicitly assigned fixed IDs.
+# This mapping must NEVER change; otherwise, existing seeds will become incompatible.
+SIGIL_IDS = {
+    "Beast Sigil":         data.SIGIL_ITEM_BASE + 0,   # Beast (Fallback)
+    "Guardian Sigil":      data.SIGIL_ITEM_BASE + 1,   # Guardian (Fallback)
+    "Cult Sigil":          data.SIGIL_ITEM_BASE + 2,   # Cult (Fallback)
+    "Gravekeeper Sigil":   data.SIGIL_ITEM_BASE + 3,   # Gravekeeper (Fallback)
+    "Plaguebearer Sigil":  data.SIGIL_ITEM_BASE + 4,   # PlagueRoot
+    "Nestling Sigil":      data.SIGIL_ITEM_BASE + 5,   # Nestling
+    "Faye II Sigil":       data.SIGIL_ITEM_BASE + 6,   # Guardian2
+    "Ghost Sigil":         data.SIGIL_ITEM_BASE + 7,   # Ghost
+    "Hunter Sigil":        data.SIGIL_ITEM_BASE + 8,   # Master
+    "EyesTree Sigil":      data.SIGIL_ITEM_BASE + 9,   # EyesTree
+    "Puppet Master Sigil": data.SIGIL_ITEM_BASE + 10,  # Queen
+    "Witch Sigil":         data.SIGIL_ITEM_BASE + 11,  # Witch
+    "Witch II Sigil":      data.SIGIL_ITEM_BASE + 12,  # Witch2
+}
+
+
 def _build_names() -> dict[str, int]:
-    names: dict[str, int] = {}
-    # Sigils are the only progression items.
-    sigil_index = 0
-    for _key, _name, _level, sigil in data.BOSSES:
-        if sigil:
-            names[sigil] = data.SIGIL_ITEM_BASE + sigil_index
-            sigil_index += 1
+    names: dict[str, int] = dict(SIGIL_IDS)
     for i, (title, _talisman_id) in enumerate(data.TALISMANS):
         names[data.talisman_item_name(title)] = data.TALISMAN_ITEM_BASE + i
     for i, (tree_id, title) in enumerate(data.SKILLS):
@@ -30,9 +43,8 @@ def _build_names() -> dict[str, int]:
 
 ITEM_NAME_TO_ID = _build_names()
 
-PROGRESSION_ITEMS = {
-    sigil for _key, _name, _level, sigil in data.BOSSES if sigil
-}
+# ALL sigils can be upgraded—including the fallback sigils, once they're in the pool.
+PROGRESSION_ITEMS = set(SIGIL_IDS.keys())
 
 
 class RubiniteItem(Item):
@@ -45,8 +57,6 @@ def create_item_with_correct_classification(world: RubiniteWorld, name: str) -> 
     elif name == data.FILLER_ITEM:
         classification = ItemClassification.filler
     else:
-        # Talismans and skills make the player stronger, but no boss is logically
-        # gated behind a particular one.
         classification = ItemClassification.useful
     return RubiniteItem(name, classification, ITEM_NAME_TO_ID[name], world.player)
 
@@ -57,7 +67,10 @@ def get_random_filler_item_name(_world: RubiniteWorld) -> str:
 
 def create_all_items(world: RubiniteWorld) -> None:
     itempool: list[Item] = []
-    for _key, _name, _level, sigil in data.BOSSES:
+    for key, _name, _level, _vanilla_sigil in data.BOSSES:
+        if key in world._starting_boss_keys:
+            continue
+        sigil = data.sigil_for_boss_key_or_fallback(key)
         if sigil:
             itempool.append(world.create_item(sigil))
     for title, _talisman_id in data.TALISMANS:

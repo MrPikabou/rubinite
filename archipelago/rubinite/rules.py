@@ -25,7 +25,6 @@ def set_all_rules(world: RubiniteWorld) -> None:
                 location = world.get_location(data.location_name(boss_name, suffix))
                 location.item_rule = _not_progression
 
-    # The goal is to reach Alcina, True Form's portal, which requires the
-    # Witch II Sigil. A region completion rule avoids depending on the event
-    # item's collection state.
-    world.set_completion_rule(CanReachRegion("Alcina, True Form"))
+    goal_key = world.get_goal_boss_key()
+    goal_name = next(name for key, name, _l, _s in data.BOSSES if key == goal_key)
+    world.set_completion_rule(CanReachRegion(goal_name))

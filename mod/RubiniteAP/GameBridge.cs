@@ -31,6 +31,7 @@ namespace RubiniteAP
         private bool _needsFullLock;
         private bool _startingRun;
         private int _messageCount;
+        private string _goalBossKey = "Witch2";
 
         public event Action LogChanged;
 
@@ -102,6 +103,13 @@ namespace RubiniteAP
                 }
                 AddLog("Boss scene map loaded (" + _bossSceneMap.Count + " entries).");
             }
+
+            var goalFromSlot = info.SlotData?["goal_boss"]?.ToString();
+            if (!string.IsNullOrEmpty(goalFromSlot))
+            {
+                _goalBossKey = goalFromSlot;
+                AddLog("Goal boss: " + _goalBossKey);
+            }   
 
             State.AddChecked(info.CheckedLocations);
             State.Save();
@@ -588,13 +596,13 @@ namespace RubiniteAP
                 }
             }
 
-            if (boss.Key == "Witch2" && !State.GoalSent)
+            if (boss.Key == _goalBossKey && !State.GoalSent)
             {
                 State.GoalSent = true;
                 State.Save();
                 if (Client.IsConnected)
                     Client.SendGoal();
-                AddLog("Goal complete: Alcina, True Form defeated!");
+                AddLog("Goal complete: " + boss.Name + " defeated!");
             }
         }
 

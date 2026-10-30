@@ -30,17 +30,11 @@ class RubiniteLocation(Location):
 
 
 def create_all_locations(world: RubiniteWorld) -> None:
-    for _key, boss_name, _level, _sigil in data.BOSSES:
-        region = world.get_region(boss_name)
-        for suffix, _slug in data.CHECK_TYPES:
-            name = data.location_name(boss_name, suffix)
-            region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
-
-    # Victory is an event inside the goal boss's region. Reaching the region already
-    # requires the goal boss's sigil, so the event only needs to exist.
-    goal_region = world.get_region("Alcina, True Form")
+    goal_key = world.get_goal_boss_key()
+    goal_boss_name = next(name for key, name, _l, _s in data.BOSSES if key == goal_key)
+    goal_region = world.get_region(goal_boss_name)
     goal_region.add_event(
-        "Alcina, True Form Defeated",
+        f"{goal_boss_name} Defeated",
         "Victory",
         location_type=RubiniteLocation,
         item_type=items.RubiniteItem,

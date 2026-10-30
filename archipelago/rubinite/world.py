@@ -49,27 +49,44 @@ class RubiniteWorld(World):
                 slug: locations.LOCATION_NAME_TO_ID[data.location_name(name, suffix)]
                 for suffix, slug in data.CHECK_TYPES
             }
+            is_starting = key in self._starting_boss_keys
             boss_data.append(
                 {
                     "key": key,
                     "name": name,
                     "level": level,
-                    "sigil": sigil,
-                    "start": sigil is None,
+                    "sigil": None if is_starting else data.sigil_for_boss_key_or_fallback(key),
+                    "start": is_starting,
                     "locations": location_ids,
                 }
             )
         return {
             "version": 1,
-            "goal_boss": data.GOAL_BOSS_LEVEL,
+            "goal_boss": self.get_goal_boss_key(),
             "item_ids": items.ITEM_NAME_TO_ID,
             "bosses": boss_data,
             "boss_scene_map": self._boss_scene_map,
         }
     
-    def __init__(self, multiworld, player):
-        super().__init__(multiworld, player)
-        self._boss_scene_map: dict[str, str] = self._compute_boss_scene_map()
+    def generate_early(self) -> None:
+        self._boss_scene_map = self._compute_boss_scene_map()
+        self._starting_boss_keys = self._compute_starting_bosses()
+    
+    def _compute_starting_bosses(self) -> set[str]:
+        count = self.options.starting_boss_count.value
+        all_keys = [key for key, _n, _l, _s in data.BOSSES]
+        goal_key = self.get_goal_boss_key()
+        goal_scene = data.level_for_boss_key(goal_key)
+        goal_portals = {
+            key for key in all_keys
+            if self._boss_scene_map.get(data.level_for_boss_key(key)) == goal_scene
+        }
+        candidates = [key for key in all_keys if key not in goal_portals]
+
+        count = max(1, min(count, len(candidates)))
+        if self.options.starting_boss_selection.value == self.options.starting_boss_selection.option_random:
+            return set(self.random.sample(candidates, count))
+        return set(candidates[:count])
 
     def _compute_boss_scene_map(self) -> dict[str, str]:
         arenas = [level for _k, _n, level, _s in data.BOSSES]
@@ -90,13 +107,23 @@ class RubiniteWorld(World):
         return None
 
     def sigil_for_boss_region(self, boss_key: str) -> str | None:
-        """Sigil that is needed for reaching boss_key region."""
+        """Sigil that is needed for reaching boss_key region. (None = free)."""
         portal = self._portal_level_for_boss(boss_key)
         if portal is None:
             return None
         portal_boss = data.boss_for_level(portal)
         if portal_boss is None:
             return None
-        return portal_boss[3]  # Sigil of Boss' Portal
+        portal_key = portal_boss[0]
+        if portal_key in self._starting_boss_keys:
+            return None
+        return data.sigil_for_boss_key_or_fallback(portal_key)
 
-    
+    def get_goal_boss_key(self) -> str:
+        """Provides the boss key that must be defeated."""
+        value = self.options.goal_boss.value
+        # Convert choice value in Key Value: 0 -> "Beast", 12 -> "Witch2"
+        keys = [key for key, _n, _l, _s in data.BOSSES]
+        if 0 <= value < len(keys):
+            return keys[value]
+        return "Witch2"
