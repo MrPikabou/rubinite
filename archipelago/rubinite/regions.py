@@ -20,13 +20,12 @@ def create_and_connect_regions(world: RubiniteWorld) -> None:
         regions.append(Region(boss_name, world.player, world.multiworld))
     world.multiworld.regions += regions
 
-    for _key, boss_name, _level, sigil in data.BOSSES:
-        boss_region = world.get_region(boss_name)
-        if sigil:
-            challenge_area.connect(
-                boss_region,
-                f"Challenge Area to {boss_name}",
-                rule=Has(sigil),
-            )
-        else:
-            challenge_area.connect(boss_region, f"Challenge Area to {boss_name}")
+    for key, boss_name, _level, _vanilla_sigil in data.BOSSES:
+    boss_region = world.get_region(boss_name)
+    sigil = world.sigil_for_boss_region(key)
+    if sigil:
+        challenge_area.connect(
+            boss_region, f"Challenge Area to {boss_name}", rule=Has(sigil)
+        )
+    else:
+        challenge_area.connect(boss_region, f"Challenge Area to {boss_name}")

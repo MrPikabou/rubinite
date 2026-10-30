@@ -32,12 +32,15 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(ApplicationCore), "LoadLevel")]
     internal static class LoadLevelPatch
     {
-        private static bool Prefix(string levelName)
+        private static bool Prefix(ref string levelName)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive)
                 return true;
-            return !bridge.ShouldBlockLoad(levelName);
+            if (bridge.ShouldBlockLoad(levelName))
+                return false;
+            levelName = bridge.RemapBossScene(levelName);
+            return true;
         }
     }
 

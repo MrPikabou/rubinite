@@ -119,3 +119,24 @@ def talisman_item_name(title: str) -> str:
 
 def skill_item_name(tree_id: str, title: str) -> str:
     return f"Skill {tree_id}: {title}"
+
+
+def level_for_boss_key(key: str) -> str | None:
+    for k, _n, level, _s in BOSSES:
+        if k == key:
+            return level
+    return None
+
+
+def boss_for_level(level: str) -> tuple | None:
+    for boss in BOSSES:
+        if boss[2] == level:
+            return boss
+    return None
+
+
+def sigil_for_boss_key(key: str) -> str | None:
+    for k, _n, _l, sigil in BOSSES:
+        if k == key:
+            return sigil
+    return None

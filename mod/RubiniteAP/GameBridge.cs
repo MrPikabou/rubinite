@@ -26,6 +26,7 @@ namespace RubiniteAP
         private readonly Dictionary<long, string> _itemNames = new Dictionary<long, string>();
         private readonly Dictionary<string, string> _talismanItemByDataId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _skillItemByTreeId = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> _bossSceneMap = new Dictionary<string, string>();
         private bool _initialApplied;
         private bool _needsFullLock;
         private bool _startingRun;
@@ -87,6 +88,19 @@ namespace RubiniteAP
                     if (long.TryParse(property.Value.ToString(), out var id))
                         _itemNames[id] = property.Name;
                 }
+            }
+
+            _bossSceneMap.Clear();
+            if (info.SlotData?["boss_scene_map"] is JObject sceneMap)
+            {
+                foreach (var prop in sceneMap.Properties())
+                {
+                    var from = prop.Name;
+                    var to = prop.Value?.ToString();
+                    if (!string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(to))
+                        _bossSceneMap[from] = to;
+                }
+                AddLog("Boss scene map loaded (" + _bossSceneMap.Count + " entries).");
             }
 
             State.AddChecked(info.CheckedLocations);
@@ -600,6 +614,15 @@ namespace RubiniteAP
                 // fall through to the public field
             }
             return component.levelName != null ? component.levelName.displayName : null;
+        }
+
+        public string RemapBossScene(string levelName)
+        {
+            if (string.IsNullOrEmpty(levelName))
+                return levelName;
+            return _bossSceneMap.TryGetValue(levelName, out var mapped) && !string.IsNullOrEmpty(mapped)
+                ? mapped
+                : levelName;
         }
     }
 }

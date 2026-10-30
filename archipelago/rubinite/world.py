@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from worlds.AutoWorld import World
+from .options import RubiniteOptions
 
 from . import data, items, locations, regions, rules
 
@@ -22,6 +23,8 @@ class RubiniteWorld(World):
     location_name_to_id = locations.LOCATION_NAME_TO_ID
     item_name_to_id = items.ITEM_NAME_TO_ID
     origin_region_name = "Challenge Area"
+    options_dataclass = RubiniteOptions
+    options: RubiniteOptions
 
     def create_regions(self) -> None:
         regions.create_and_connect_regions(self)
@@ -61,4 +64,39 @@ class RubiniteWorld(World):
             "goal_boss": data.GOAL_BOSS_LEVEL,
             "item_ids": items.ITEM_NAME_TO_ID,
             "bosses": boss_data,
+            "boss_scene_map": self._boss_scene_map,
         }
+    
+    def __init__(self, multiworld, player):
+        super().__init__(multiworld, player)
+        self._boss_scene_map: dict[str, str] = self._compute_boss_scene_map()
+
+    def _compute_boss_scene_map(self) -> dict[str, str]:
+        arenas = [level for _k, _n, level, _s in data.BOSSES]
+        if self.options.boss_shuffle.value == self.options.boss_shuffle.option_vanilla:
+            return {a: a for a in arenas}
+        shuffled = arenas.copy()
+        self.random.shuffle(shuffled)
+        return dict(zip(arenas, shuffled))
+
+    def _portal_level_for_boss(self, boss_key: str) -> str | None:
+        """Portal scene that loads scene from boss_key (after Shuffle)."""
+        target = data.level_for_boss_key(boss_key)
+        if target is None:
+            return None
+        for arena_level, shuffled_level in self._boss_scene_map.items():
+            if shuffled_level == target:
+                return arena_level
+        return None
+
+    def sigil_for_boss_region(self, boss_key: str) -> str | None:
+        """Sigil that is needed for reaching boss_key region."""
+        portal = self._portal_level_for_boss(boss_key)
+        if portal is None:
+            return None
+        portal_boss = data.boss_for_level(portal)
+        if portal_boss is None:
+            return None
+        return portal_boss[3]  # Sigil of Boss' Portal
+
+    
