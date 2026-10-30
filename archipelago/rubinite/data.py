@@ -6,20 +6,21 @@ Everything in this module is derived from the retail game's own ScriptableObject
 
 from __future__ import annotations
 
-# The challenge area exposes one portal per boss. The first three are always open;
-# the rest require their sigil item from the multiworld.
+# The challenge area exposes one portal per boss. The first four bosses in this list
+# are available from the start in vanilla. StartingBossCount / StartingBossSelection
+# control how many and which portals are actually unlocked at the beginning of an AP run.
 BOSSES = [
     # key, display name, level scene, required sigil (None = available from the start)
-    ("Beast", "The Beast", "BeastLevel", None),
-    ("Guardian", "Faye the Guardian", "GuardianLevel", None),
-    ("EyesTree", "The Red-Eyed Tree", "EyesTreeLevel", None),
+    ("Beast", "The Beast", "BeastLevel", None), # "Beast Sigil"
+    ("Guardian", "Faye, The Guardian", "GuardianLevel", None), # "Guardian Sigil"
     ("Cult", "The Priest", "CultLevel", "Cult Sigil"),
-    ("PlagueBird", "The Gravekeeper", "PlagueLevel", "Gravekeeper Sigil"),
+    ("Gravekeeper", "The Gravekeeper", "PlagueLevel", "Gravekeeper Sigil"),
     ("PlagueRoot", "The Plaguebearer", "PlagueRootLevel", "Plaguebearer Sigil"),
     ("Nestling", "The Martyred Angel", "NestlingLevel", "Nestling Sigil"),
     ("Guardian2", "Faye II", "GuardianLevel2", "Faye II Sigil"),
     ("Ghost", "The Ghost", "GhostLevel", "Ghost Sigil"),
     ("Master", "Roy the Hunter", "MasterLevel", "Hunter Sigil"),
+    ("EyesTree", "The Red-Eyed Tree", "EyesTreeLevel", "EyesTree Sigil"),
     ("Queen", "The Puppet Master", "QueenLevel", "Puppet Master Sigil"),
     ("Witch", "Alcina the Witch", "Witch_FirstRunLevel", "Witch Sigil"),
     ("Witch2", "Alcina, True Form", "WitchLevel", "Witch II Sigil"),
@@ -100,6 +101,26 @@ SKILLS = [
 ]
 
 FILLER_ITEM = "Blood Dust"
+
+
+# Fallback sigil names for the bosses that don't need a sigil.
+# These are added as items only if the boss, due to randomization,
+# is NO LONGER one of the starting bosses.
+BOSS_SIGIL_FALLBACK = {
+    "Beast": "Beast Sigil",
+    "Guardian": "Guardian Sigil",
+    "Cult": "Cult Sigil",
+    "Gravekeeper": "Gravekeeper Sigil",
+}
+
+
+def sigil_for_boss_key_or_fallback(key: str) -> str | None:
+    """Delivers a boss's sigil, including a fallback for the starting bosses."""
+    for k, _n, _l, sigil in BOSSES:
+        if k == key:
+            return sigil if sigil else BOSS_SIGIL_FALLBACK.get(key)
+    return None
+
 
 # Base IDs. Location and item ranges are intentionally separate.
 LOCATION_BASE = 71000
