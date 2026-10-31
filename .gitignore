@@ -1,15 +1,28 @@
-*.dll
-!RubiniteAP.dll
-*.exe
-*.ini
+d# Build output (dotnet build)
+bin/
+obj/
 
+# Unity/Game files
 Rubinite_Data/*
 MonoBleedingEdge/*
 BepInEx/*
 
-archipelago/*txt
-Debug/
-
+# Tools
 tools/*
-tools/assetripper/
+
+# Dist (generated apworld/yaml)
 dist/*
+
+# APWorld build artifacts
+archipelago/*.txt
+
+# Binaries
+*.dll
+*.exe
+*.ini
+
+# IDE (add these)
+.vs/
+.idea/
+*.user
+*.suo
