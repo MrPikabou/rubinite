@@ -79,11 +79,23 @@ def create_all_items(world: RubiniteWorld) -> None:
         itempool.append(world.create_item(data.skill_item_name(tree_id, title)))
 
     unfilled_locations = len(world.multiworld.get_unfilled_locations(world.player))
+
+    # Trim useful items if the pool exceeds available locations.
+    # Sigils are progression and must never be dropped. Talismans and skills
+    # are useful, so trimming them keeps the seed solvable.
+    if len(itempool) > unfilled_locations:
+        progression = [i for i in itempool if i.advancement]
+        useful = [i for i in itempool if not i.advancement]
+        keep = unfilled_locations - len(progression)
+        if keep < 0:
+            raise ValueError(
+                f"Rubinite has more progression items ({len(progression)}) "
+                f"than locations ({unfilled_locations}). "
+                f"Enable more checks or reduce the starting boss count."
+            )
+        itempool = progression + useful[:keep]
+
     missing = unfilled_locations - len(itempool)
-    if missing < 0:
-        raise ValueError(
-            f"Rubinite has more items ({len(itempool)}) than locations ({unfilled_locations})."
-        )
     itempool.extend(world.create_filler() for _ in range(missing))
 
     world.multiworld.itempool += itempool

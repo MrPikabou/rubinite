@@ -27,6 +27,7 @@ namespace RubiniteAP
         private readonly Dictionary<string, string> _talismanItemByDataId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _skillItemByTreeId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _bossSceneMap = new Dictionary<string, string>();
+        private readonly Dictionary<string, (string sigil, bool start)> _bossSlotInfo = new Dictionary<string, (string, bool)>();
         private bool _initialApplied;
         private bool _needsFullLock;
         private bool _startingRun;
@@ -104,6 +105,23 @@ namespace RubiniteAP
                 AddLog("Boss scene map loaded (" + _bossSceneMap.Count + " entries).");
             }
 
+<<<<<<< HEAD
+            _bossSlotInfo.Clear();
+            if (info.SlotData?["bosses"] is JArray bossesArr)
+            {       
+                foreach (var bossToken in bossesArr)
+                {
+                    var key = bossToken["key"]?.ToString();
+                    if (string.IsNullOrEmpty(key)) continue;
+                    var sigil = bossToken["sigil"]?.ToString();   // null when starting
+                    var start = bossToken["start"]?.Value<bool>() ?? false;
+                    _bossSlotInfo[key] = (sigil, start);
+                }
+            AddLog("Boss slot info loaded (" + _bossSlotInfo.Count + " entries).");
+            }
+
+=======
+>>>>>>> 88c858e9f1129d3bd215be8b689fc2ad43806a9b
             var goalFromSlot = info.SlotData?["goal_boss"]?.ToString();
             if (!string.IsNullOrEmpty(goalFromSlot))
             {
@@ -498,9 +516,26 @@ namespace RubiniteAP
         {
             if (boss == null)
                 return true;
+<<<<<<< HEAD
+
+            // slot_data is the source of truth for version 2+ seeds.
+            if (!string.IsNullOrEmpty(boss.Key) && _bossSlotInfo.TryGetValue(boss.Key, out var info))
+            {
+                if (info.start)
+                    return true;
+                return !string.IsNullOrEmpty(info.sigil) && State.HasItem(info.sigil);
+            }
+
+            // If slot_data is missing a boss entry, treat it as locked to avoid
+            // accidentally unlocking progression. This should never happen with
+            // version 2 seeds, but failing closed is safer than failing open.
+            AddLog("WARNING: No slot_data entry for boss '" + boss.Key + "'; treating as locked.");
+            return false;
+=======
             if (boss.StartUnlocked)
                 return true;
             return !string.IsNullOrEmpty(boss.Sigil) && State.HasItem(boss.Sigil);
+>>>>>>> 88c858e9f1129d3bd215be8b689fc2ad43806a9b
         }
 
         /// <summary>Called from GamePlayCore.SetUp before flags are read into the save.</summary>
