@@ -1,6 +1,0 @@
-C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Debug\RubiniteAP.csproj.AssemblyReference.cache
-C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Debug\RubiniteAP.GeneratedMSBuildEditorConfig.editorconfig
-C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Debug\RubiniteAP.csproj.CoreCompileInputs.cache
-C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\bin\Debug\RubiniteAP.deps.json
-C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\bin\Debug\RubiniteAP.dll
-C:\Users\faggot\Downloads\Rubinite\game\mod\RubiniteAP\obj\Debug\RubiniteAP.dll
