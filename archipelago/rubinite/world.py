@@ -69,6 +69,7 @@ class RubiniteWorld(World):
             "item_ids": items.ITEM_NAME_TO_ID,
             "bosses": boss_data,
             "boss_scene_map": self._boss_scene_map,
+            "required_rank": self.options.required_rank.value,
             "enabled_checks": enabled_slugs,
         }
     
@@ -132,7 +133,7 @@ class RubiniteWorld(World):
             return keys[value]
         return "Witch2"
     
-    def get_enabled_check_types(self) -> list[tuple[str, str]]:
+        def get_enabled_check_types(self) -> list[tuple[str, str]]:
         """Return the check types enabled for this seed. 'First Clear' is always on."""
         enabled: list[tuple[str, str]] = [("First Clear", "first")]
         if self.options.enable_nohit_clear.value:
@@ -141,6 +142,6 @@ class RubiniteWorld(World):
             enabled.append(("No-Talisman Clear", "notalisman"))
         if self.options.enable_flawless_clear.value:
             enabled.append(("Flawless Clear", "flawless"))
-        if self.options.enable_srank_clear.value:
-            enabled.append(("S-Rank Clear", "srank"))
+        if self.options.enable_rank_clear.value:
+            enabled.append(("Target Rank Clear", "rank"))
         return enabled

@@ -1,15 +1,6 @@
 from dataclasses import dataclass
 from Options import Choice, PerGameCommonOptions, Range, Toggle
-
 from . import data
-
-
-class BossShuffle(Choice):
-    """Shuffle which boss scene loads at each level entrance."""
-    display_name = "Boss Shuffle"
-    option_vanilla = 0
-    option_shuffle = 1
-    default = 0
 
 
 class GoalBoss(Choice):
@@ -73,22 +64,33 @@ class EnableFlawlessClear(Toggle):
     default = False
 
 
-class EnableSRankClear(Toggle):
-    """Enable the S-Rank Clear check for each boss."""
-    display_name = "Enable S-Rank Clear"
-    default = False
+class EnableRankClear(Toggle):
+    """Enable the Rank Clear check for each boss."""
+    display_name = "Enable Rank Clear"
+    default = True
+
+
+class RequiredRank(Choice):
+    """Which rank is required to unlock the Rank Clear check (S is hardest, C is easiest)."""
+    display_name = "Required Rank"
+    option_s = 0
+    option_a = 1
+    option_b = 2
+    option_c = 3
+    default = 2
 
 
 @dataclass
 class RubiniteOptions(PerGameCommonOptions):
-    boss_shuffle: BossShuffle
     goal_boss: GoalBoss
+    boss_shuffle: BossShuffle
     starting_boss_count: StartingBossCount
     starting_boss_selection: StartingBossSelection
     enable_nohit_clear: EnableNoHitClear
     enable_notalisman_clear: EnableNoTalismanClear
     enable_flawless_clear: EnableFlawlessClear
-    enable_srank_clear: EnableSRankClear
+    enable_rank_clear: EnableRankClear
+    required_rank: RequiredRank
 
     # Placeholders for more options to be added later:
     # player_color: PlayerColor

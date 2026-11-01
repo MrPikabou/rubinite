@@ -27,12 +27,20 @@ namespace RubiniteAP
         private readonly Dictionary<string, string> _talismanItemByDataId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _skillItemByTreeId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _bossSceneMap = new Dictionary<string, string>();
-        private readonly Dictionary<string, (string sigil, bool start)> _bossSlotInfo = new Dictionary<string, (string, bool)>();
+        private readonly Dictionary<string, (string sigil, bool start)> _bossSlotInfoByLevel = new Dictionary<string, (string, bool)>();
         private readonly HashSet<string> _enabledChecks = new HashSet<string>();
+
         private bool _needsFullLock;
         private bool _startingRun;
         private int _messageCount;
         private string _goalBossKey = "Witch2";
+
+        private string _lastLoadedLevel = null;
+        private string _lastPortalLevel = null;
+        public string LastPortalLevel => _lastPortalLevel;
+        private string _podiumClickPending = null;
+
+        private int _requiredRankIndex = 0;
 
         public event Action LogChanged;
 
@@ -105,19 +113,23 @@ namespace RubiniteAP
                 AddLog("Boss scene map loaded (" + _bossSceneMap.Count + " entries).");
             }
 
-            _bossSlotInfo.Clear();
+            _bossSlotInfoByLevel.Clear();
             if (info.SlotData?["bosses"] is JArray bossesArr)
-            {       
+            {
                 foreach (var bossToken in bossesArr)
                 {
-                    var key = bossToken["key"]?.ToString();
-                    if (string.IsNullOrEmpty(key)) continue;
+                    var level = bossToken["level"]?.ToString();
+                    if (string.IsNullOrEmpty(level)) continue;
                     var sigil = bossToken["sigil"]?.ToString();   // null when starting
                     var start = bossToken["start"]?.Value<bool>() ?? false;
-                    _bossSlotInfo[key] = (sigil, start);
+                    _bossSlotInfoByLevel[level] = (sigil, start);
                 }
-            AddLog("Boss slot info loaded (" + _bossSlotInfo.Count + " entries).");
+                AddLog("Boss slot info loaded (" + _bossSlotInfoByLevel.Count + " entries).");
             }
+
+            var rankFromSlot = info.SlotData?["required_rank"]?.Value<int>() ?? 0;
+            _requiredRankIndex = rankFromSlot;
+            AddLog("Required rank index: " + _requiredRankIndex);
 
             var goalFromSlot = info.SlotData?["goal_boss"]?.ToString();
             if (!string.IsNullOrEmpty(goalFromSlot))
@@ -233,9 +245,14 @@ namespace RubiniteAP
                 return;
             if (ApRunActive && DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
                 ApRunActive = false;
-            if (ApRunActive && SceneManager.GetActiveScene().name == "TitleMenu")
+
+            var sceneName = SceneManager.GetActiveScene().name;
+            if (ApRunActive && sceneName == "TitleMenu")
             {
                 ApRunActive = false;
+                _lastLoadedLevel = null;
+                _lastPortalLevel = null;
+                _podiumClickPending = null;
                 AddLog("Run ended (returned to the title screen).");
             }
         }
@@ -507,13 +524,14 @@ namespace RubiniteAP
             RefreshPortals();
         }
 
-        private bool IsBossUnlocked(BossInfo boss)
+        private bool IsBossUnlocked(BossInfo boss, string levelName)
         {
             if (boss == null)
                 return true;
 
             // slot_data is the source of truth for version 2+ seeds.
-            if (!string.IsNullOrEmpty(boss.Key) && _bossSlotInfo.TryGetValue(boss.Key, out var info))
+            // We look up by level scene name, which is stable even if boss keys change.
+            if (!string.IsNullOrEmpty(levelName) && _bossSlotInfoByLevel.TryGetValue(levelName, out var info))
             {
                 if (info.start)
                     return true;
@@ -523,7 +541,7 @@ namespace RubiniteAP
             // If slot_data is missing a boss entry, treat it as locked to avoid
             // accidentally unlocking progression. This should never happen with
             // version 2 seeds, but failing closed is safer than failing open.
-            AddLog("WARNING: No slot_data entry for boss '" + boss.Key + "'; treating as locked.");
+            AddLog("WARNING: No slot_data entry for level '" + levelName + "'; treating as locked.");
             return false;
         }
 
@@ -544,15 +562,42 @@ namespace RubiniteAP
             }
         }
 
+        public void NotifyPodiumClick(string levelName)
+        {
+            if (string.IsNullOrEmpty(levelName)) return;
+            _podiumClickPending = levelName;
+            AddLog("Podium click: '" + levelName + "'");
+        }
+
+        public void ClearPendingPodiumClick()
+        {
+            if (!string.IsNullOrEmpty(_podiumClickPending))
+            {
+                AddLog("Podium click blocked: '" + _podiumClickPending + "'");
+                _podiumClickPending = null;
+            }
+        }
+
         public bool ShouldBlockLoad(string levelName)
         {
             if (!ApRunActive || DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
                 return false;
-            var boss = GameData.FindByLevel(levelName);
-            if (boss == null || IsBossUnlocked(boss))
+
+            // Not a podium click, and loading the current scene → retry. Allow without re-check.
+            if (string.IsNullOrEmpty(_podiumClickPending)
+                && !string.IsNullOrEmpty(_lastLoadedLevel)
+                && levelName == _lastLoadedLevel)
+            {
+                AddLog("Block: retry of '" + levelName + "' — allow");
                 return false;
+            }
+
+            var boss = GameData.FindByLevel(levelName);
+            if (boss == null || IsBossUnlocked(boss, levelName))
+                return false;
+
             StatusMessage = boss.Name + " is locked. Find " + boss.Sigil + ".";
-            AddLog(StatusMessage);
+            AddLog("Block: '" + levelName + "' blocked (" + boss.Name + ")");
             return true;
         }
 
@@ -570,7 +615,7 @@ namespace RubiniteAP
                 var boss = GameData.FindByLevel(level);
                 if (boss == null)
                     continue;
-                var unlocked = IsBossUnlocked(boss);
+                var unlocked = IsBossUnlocked(boss, level);
 
                 if (point.dialogueItem != null)
                     point.dialogueItem.gameObject.SetActive(unlocked);
@@ -606,12 +651,13 @@ namespace RubiniteAP
             var noHit = hits == 0;
             var noTalisman = talismans == 0;
             var flawless = noHit && noTalisman;
-            var sRank = false;
-            if (manager.levelTimer != null && manager.levelData.gradingScale != null
-                && manager.levelData.gradingScale.Length > 0)
+            
+            var rankAchieved = false;
+            if (manager.levelTimer != null && manager.levelData.gradingScale != null 
+                && manager.levelData.gradingScale.Length > _requiredRankIndex)
             {
-                var threshold = manager.levelData.gradingTime + manager.levelData.gradingScale[0];
-                sRank = manager.levelTimer.timer <= threshold;
+                var threshold = manager.levelData.gradingTime + manager.levelData.gradingScale[_requiredRankIndex];
+                rankAchieved = manager.levelTimer.timer <= threshold;
             }
 
             var ids = new List<long> { boss.LocationBase };
@@ -621,7 +667,7 @@ namespace RubiniteAP
                 ids.Add(boss.LocationBase + 2);
             if (flawless && _enabledChecks.Contains("flawless"))
                 ids.Add(boss.LocationBase + 3);
-            if (sRank && _enabledChecks.Contains("srank"))
+            if (rankAchieved && _enabledChecks.Contains("rank"))
                 ids.Add(boss.LocationBase + 4);
 
             var newIds = new List<long>();
@@ -653,6 +699,16 @@ namespace RubiniteAP
                     Client.SendGoal();
                 AddLog("Goal complete: " + boss.Name + " defeated!");
             }
+
+            // After a win, the next CA visit is a fresh portal pick.
+            // Clear retry state so the next LoadLevel gets remapped normally.
+            if (!string.IsNullOrEmpty(_lastLoadedLevel))
+            {
+                AddLog("Boss defeated: cleared retry state for '" + _lastLoadedLevel + "'");
+                _lastLoadedLevel = null;
+                // _lastPortalLevel stays set: used to reposition the spawn point
+                // when we return to the Challenge Area.
+            }
         }
 
         public static string GetTargetLevel(OnEnableLoadLevel component)
@@ -677,9 +733,96 @@ namespace RubiniteAP
         {
             if (string.IsNullOrEmpty(levelName))
                 return levelName;
-            return _bossSceneMap.TryGetValue(levelName, out var mapped) && !string.IsNullOrEmpty(mapped)
-                ? mapped
-                : levelName;
+
+            // Podium click = fresh portal pick. Clear retry state and remap.
+            if (!string.IsNullOrEmpty(_podiumClickPending))
+            {
+                AddLog("Remap (podium click): '" + levelName + "'");
+                _podiumClickPending = null;
+                _lastLoadedLevel = null;
+                _lastPortalLevel = null;
+            }
+            else if (!string.IsNullOrEmpty(_lastLoadedLevel) && levelName == _lastLoadedLevel)
+            {
+                AddLog("Remap: retry of '" + levelName + "' — no remap");
+                return levelName;
+            }
+
+            if (_bossSceneMap.TryGetValue(levelName, out var mapped) && !string.IsNullOrEmpty(mapped))
+            {
+                _lastPortalLevel = levelName;
+                _lastLoadedLevel = mapped;
+                AddLog("Remap: '" + levelName + "' -> '" + mapped + "'");
+                return mapped;
+            }
+
+            AddLog("Remap: '" + levelName + "' has no mapping (pass through)");
+            return levelName;
+        }
+
+        public IEnumerator TeleportPlayerToPodium(string portalLevel)
+        {
+            // Minimal delay just to ensure the scene is active, but before the fade-in finishes.
+            yield return new WaitForSeconds(0.05f);
+
+            var core = GetGamePlayCore();
+            if (core == null || core.player == null)
+            {
+                AddLog("Teleport: player not found");
+                yield break;
+            }
+
+            Vector3 targetPos = Vector3.zero;
+            bool found = false;
+            foreach (var point in Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>())
+            {   
+                if (point?.gameObject == null || !point.gameObject.scene.IsValid()) continue;
+                if (point.levelName?.displayName == portalLevel)
+                {
+                    targetPos = point.transform.position;
+                    targetPos.y -= 1.2f; 
+                    targetPos.z = core.player.transform.position.z; 
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                AddLog("Teleport: podium not found for '" + portalLevel + "'");
+                yield break;
+            }
+
+            AddLog("Teleport: enforcing position at " + targetPos);
+
+            // Force the position for 2 seconds to beat the game's fade-in
+            float timer = 0f;
+            while (timer < 2.0f)
+            {
+                GameSetting.Instance.playerLastScene.SetValue(portalLevel, "RubiniteAP");
+                GameSetting.Instance.playerLastLeaveScene.SetValue(portalLevel, "RubiniteAP");
+
+                core = GetGamePlayCore();
+                if (core != null && core.player != null)
+                {
+                    var cc = core.player.GetComponent<CharacterController>();
+                    var rb = core.player.GetComponent<Rigidbody2D>();
+
+                    if (cc != null) cc.enabled = false;
+                    if (rb != null)
+                    {   
+                        rb.velocity = Vector2.zero;
+                        rb.position = targetPos;
+                    }
+
+                    core.player.transform.position = targetPos;
+
+                    if (cc != null) cc.enabled = true;
+                }
+                timer += Time.deltaTime;
+                yield return null;
+            }
+            AddLog("Teleport: position lock released");
         }
     }
 }

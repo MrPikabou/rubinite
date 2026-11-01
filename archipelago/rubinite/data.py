@@ -50,10 +50,10 @@ CHECK_TYPES = [
     ("No-Hit Clear", "nohit"),
     ("No-Talisman Clear", "notalisman"),
     ("Flawless Clear", "flawless"),
-    ("S-Rank Clear", "srank"),
+    ("Target Rank Clear", "rank"),
 ]
 
-OPTIONAL_CHECKS = ("nohit", "notalisman", "flawless", "srank")
+OPTIONAL_CHECKS = ("nohit", "notalisman", "flawless", "rank")
 
 # All 30 real talismans (the two test entries and the exhibition dummy are excluded).
 TALISMANS = [
