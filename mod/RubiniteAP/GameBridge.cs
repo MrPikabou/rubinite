@@ -762,8 +762,7 @@ namespace RubiniteAP
 
         public IEnumerator TeleportPlayerToPodium(string portalLevel)
         {
-            // Minimal delay just to ensure the scene is active, but before the fade-in finishes.
-            yield return new WaitForSeconds(0.05f);
+            yield return null;
 
             var core = GetGamePlayCore();
             if (core == null || core.player == null)
@@ -795,9 +794,8 @@ namespace RubiniteAP
 
             AddLog("Teleport: enforcing position at " + targetPos);
 
-            // Force the position for 2 seconds to beat the game's fade-in
             float timer = 0f;
-            while (timer < 2.0f)
+            while (timer < 1.5f)
             {
                 GameSetting.Instance.playerLastScene.SetValue(portalLevel, "RubiniteAP");
                 GameSetting.Instance.playerLastLeaveScene.SetValue(portalLevel, "RubiniteAP");
@@ -807,8 +805,13 @@ namespace RubiniteAP
                 {
                     var cc = core.player.GetComponent<CharacterController>();
                     var rb = core.player.GetComponent<Rigidbody2D>();
+                    var anim = core.player.GetComponent<Animator>();
 
                     if (cc != null) cc.enabled = false;
+                    
+                    // Stop the wake-up animation from dragging the player back
+                    if (anim != null && timer < 0.2f) anim.enabled = false; 
+                    
                     if (rb != null)
                     {   
                         rb.velocity = Vector2.zero;
@@ -818,6 +821,9 @@ namespace RubiniteAP
                     core.player.transform.position = targetPos;
 
                     if (cc != null) cc.enabled = true;
+                    
+                    // Re-enable animation after the snap is done
+                    if (anim != null && timer >= 0.2f) anim.enabled = true;
                 }
                 timer += Time.deltaTime;
                 yield return null;

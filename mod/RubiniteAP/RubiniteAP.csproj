@@ -63,5 +63,8 @@
     <Reference Include="UnityEngine.Physics2DModule">
       <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.Physics2DModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+    </Reference>
   </ItemGroup>
 </Project>
