@@ -57,5 +57,11 @@
       <HintPath>..\..\Rubinite_Data\Managed\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.Physics2DModule">
+      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.Physics2DModule.dll</HintPath>
+    </Reference>
   </ItemGroup>
 </Project>
