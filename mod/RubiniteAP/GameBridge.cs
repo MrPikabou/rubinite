@@ -243,6 +243,9 @@ namespace RubiniteAP
         {
             if (_startingRun)
                 return;
+
+            bool wasActive = ApRunActive;
+
             if (ApRunActive && DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
                 ApRunActive = false;
 
@@ -254,6 +257,12 @@ namespace RubiniteAP
                 _lastPortalLevel = null;
                 _podiumClickPending = null;
                 AddLog("Run ended (returned to the title screen).");
+            }
+
+            // If the run just ended, restore the original Save 999 so Vanilla isn't polluted
+            if (wasActive && !ApRunActive)
+            {
+                RestoreChallengeSave();
             }
         }
 
@@ -377,6 +386,29 @@ namespace RubiniteAP
             if (Directory.Exists(source) && !Directory.Exists(backup))
             {
                 CopyDirectory(source, backup);
+            }
+        }
+
+        private static void RestoreChallengeSave()
+        {
+            var versionFolder = DataSaver.path_versionFolder;
+            var source = IOPath.Combine(versionFolder, "ChallengeSave_APBackup");
+            var destination = IOPath.Combine(versionFolder, DataSaver.CHALLENGE_SAVE_FOLDER);
+            
+            if (Directory.Exists(source))
+            {
+                try
+                {
+                    if (Directory.Exists(destination))
+                        Directory.Delete(destination, true);
+                    CopyDirectory(source, destination);
+                    Directory.Delete(source, true);
+                    RubiniteAPPlugin.Instance?.Bridge?.AddLog("Vanilla Challenge Save restored.");
+                }
+                catch (Exception ex)
+                {
+                    RubiniteAPPlugin.Instance?.Bridge?.AddLog("Failed to restore Challenge Save: " + ex.Message);
+                }
             }
         }
 
@@ -553,6 +585,20 @@ namespace RubiniteAP
             try
             {
                 DataSaver.LoadFlag();
+
+                // --- START SAVE ISOLATION ---
+                if (GameSetting.Instance != null)
+                {
+                    // Reset Money (Blood Dust) to 0 for AP
+                    if (GameSetting.Instance.dustFlag != null)
+                        GameSetting.Instance.dustFlag.SetValue(0, "RubiniteAP");
+
+                    // Reset Skin to default (we will hook player_color here later)
+                    if (GameSetting.Instance.rubySkinID != null)
+                        GameSetting.Instance.rubySkinID.SetValue("", "RubiniteAP");
+                }
+                // --- END SAVE ISOLATION ---
+
                 ApplyToFlags(true);
                 DataSaver.SaveFlag(DataSaver.path_saveFolder);
             }
@@ -652,12 +698,22 @@ namespace RubiniteAP
             var noTalisman = talismans == 0;
             var flawless = noHit && noTalisman;
             
-            var rankAchieved = false;
-            if (manager.levelTimer != null && manager.levelData.gradingScale != null 
-                && manager.levelData.gradingScale.Length > _requiredRankIndex)
+                        var rankAchieved = false;
+            if (manager.levelTimer != null && manager.levelData.gradingScale != null && manager.levelData.gradingScale.Length > 0)
             {
-                var threshold = manager.levelData.gradingTime + manager.levelData.gradingScale[_requiredRankIndex];
-                rankAchieved = manager.levelTimer.timer <= threshold;
+                if (_requiredRankIndex >= manager.levelData.gradingScale.Length)
+                {
+                    // The player asked for a rank lower than the game's lowest tracked rank (e.g., C when only S, A, B exist).
+                    // In this case, simply defeating the boss counts as achieving it.
+                    rankAchieved = true;
+                    AddLog($"Rank debug: req={_requiredRankIndex} (below game's lowest), auto-passing.");
+                }
+                else
+                {
+                    var threshold = manager.levelData.gradingTime + manager.levelData.gradingScale[_requiredRankIndex];
+                    rankAchieved = manager.levelTimer.timer <= threshold;
+                    AddLog($"Rank debug: req={_requiredRankIndex}, time={manager.levelTimer.timer:F1}, max={threshold:F1}");
+                }
             }
 
             var ids = new List<long> { boss.LocationBase };
