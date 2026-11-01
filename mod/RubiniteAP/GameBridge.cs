@@ -42,6 +42,8 @@ namespace RubiniteAP
 
         private int _requiredRankIndex = 0;
 
+        private string _playerColorKey = "default";
+
         public event Action LogChanged;
 
         public GameBridge(ApState state, ApClient client)
@@ -130,6 +132,13 @@ namespace RubiniteAP
             var rankFromSlot = info.SlotData?["required_rank"]?.Value<int>() ?? 0;
             _requiredRankIndex = rankFromSlot;
             AddLog("Required rank index: " + _requiredRankIndex);
+
+            var colorFromSlot = info.SlotData?["player_color"]?.ToString();
+            if (!string.IsNullOrEmpty(colorFromSlot))
+            {
+                _playerColorKey = colorFromSlot;
+                AddLog("Player color: " + _playerColorKey);
+            }
 
             var goalFromSlot = info.SlotData?["goal_boss"]?.ToString();
             if (!string.IsNullOrEmpty(goalFromSlot))
@@ -227,10 +236,21 @@ namespace RubiniteAP
             if (string.IsNullOrEmpty(message))
                 return;
             _messageCount++;
-            LogLines.Add(DateTime.Now.ToString("HH:mm:ss") + "  " + message);
+            
+            string formattedMessage = DateTime.Now.ToString("HH:mm:ss") + "  " + message;
+            LogLines.Add(formattedMessage);
+            
             if (LogLines.Count > 200)
                 LogLines.RemoveRange(0, LogLines.Count - 200);
             LogChanged?.Invoke();
+
+            try
+            {
+                // Save it to the BepInEx folder
+                string logPath = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RubiniteAP_Log.txt");
+                System.IO.File.AppendAllText(logPath, formattedMessage + Environment.NewLine);
+            }
+            catch { /* Ignore file errors */ }
         }
 
         private void ShowItemToast(string name)
@@ -586,18 +606,21 @@ namespace RubiniteAP
             {
                 DataSaver.LoadFlag();
 
-                // --- START SAVE ISOLATION ---
                 if (GameSetting.Instance != null)
                 {
                     // Reset Money (Blood Dust) to 0 for AP
                     if (GameSetting.Instance.dustFlag != null)
                         GameSetting.Instance.dustFlag.SetValue(0, "RubiniteAP");
 
-                    // Reset Skin to default (we will hook player_color here later)
+                    // Apply the chosen AP Color
+                    string skinId = GetSkinIdForColor(_playerColorKey);
                     if (GameSetting.Instance.rubySkinID != null)
-                        GameSetting.Instance.rubySkinID.SetValue("", "RubiniteAP");
+                        GameSetting.Instance.rubySkinID.SetValue(skinId, "RubiniteAP");
+                        
+                    // This directly updates the player's visual appearance
+                    if (SingletonScriptableObject<ItemDataOverview>.Instance != null)
+                        SingletonScriptableObject<ItemDataOverview>.Instance.currentSkinIDFlag.SetValue(skinId, "RubiniteAP");
                 }
-                // --- END SAVE ISOLATION ---
 
                 ApplyToFlags(true);
                 DataSaver.SaveFlag(DataSaver.path_saveFolder);
@@ -885,6 +908,24 @@ namespace RubiniteAP
                 yield return null;
             }
             AddLog("Teleport: position lock released");
+        }
+
+        private string GetSkinIdForColor(string colorKey)
+        {
+            switch (colorKey)
+            {
+                case "red":       return "eb9dd477-a430-48f8-8a7d-f721ea740a08";
+                case "blue":      return "9bd13712-7043-4590-bf83-a674fd1f64be";
+                case "yellow":    return "4ff920c2-46b1-49ba-abe5-6d37f7670fe9";
+                case "green":     return "224c421f-fb1d-4821-9df6-9312dc79b2b5";
+                case "purple":    return "9d04bf67-b8e2-4a53-b9f8-5214fd8330e8";
+                case "orange":    return "53a00205-a3e3-45bd-94bf-b965465c4116";
+                case "black":     return "fdaf67be-43b6-4a87-9968-bffff54c650b";
+                case "white":     return "1d096dbb-d1ab-418b-bbb2-f241cd71626b";
+                case "pink":      return "5cceebc3-a992-4c26-bf24-484b1a0a86fa";
+                case "turquoise": return "1ea4987a-70aa-47b3-b31b-c318079ae59d";
+                default:          return "";
+            }
         }
     }
 }

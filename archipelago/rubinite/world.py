@@ -70,6 +70,7 @@ class RubiniteWorld(World):
             "bosses": boss_data,
             "boss_scene_map": self._boss_scene_map,
             "required_rank": self.options.required_rank.value,
+            "player_color": self.options.player_color.current_key,
             "enabled_checks": enabled_slugs,
         }
     

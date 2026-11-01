@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 using PugTool.Unity.Singleton;
+using PugTool.Unity.StringList;
 
 namespace RubiniteAP
 {
@@ -143,6 +144,30 @@ namespace RubiniteAP
                     RubiniteAPPlugin.Instance.StartCoroutine(bridge.TeleportPlayerToPodium(portalLevel));
                 }
             }   
+        }
+    }
+
+    [HarmonyPatch(typeof(ChangeRubySkin), "ChangeSkin")]
+    internal static class ChangeRubySkinPatch
+    {
+        private static void Postfix()
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null) return;
+
+            try
+            {
+                var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
+                if (itemOverview != null && itemOverview.currentSkinIDFlag != null)
+                {
+                    string currentId = itemOverview.currentSkinIDFlag.GetValue();
+                    //bridge.AddLog("DEBUG SKIN ID: '" + currentId + "'");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                bridge.AddLog("Skin log failed: " + ex.Message);
+            }
         }
     }
 }

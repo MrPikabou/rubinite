@@ -80,6 +80,22 @@ class RequiredRank(Choice):
     default = 2
 
 
+class PlayerColor(Choice):
+    """Which color/skin the player starts with."""
+    display_name = "Player Color"
+    option_red = 0
+    option_blue = 1
+    option_yellow = 2
+    option_green = 3
+    option_purple = 4
+    option_orange = 5
+    option_black = 6
+    option_white = 7
+    option_pink = 8
+    option_turquoise = 9
+    default = 0
+
+
 @dataclass
 class RubiniteOptions(PerGameCommonOptions):
     goal_boss: GoalBoss
@@ -91,7 +107,7 @@ class RubiniteOptions(PerGameCommonOptions):
     enable_flawless_clear: EnableFlawlessClear
     enable_rank_clear: EnableRankClear
     required_rank: RequiredRank
+    player_color: PlayerColor
 
     # Placeholders for more options to be added later:
-    # player_color: PlayerColor
     # world_switch: WorldSwitch
