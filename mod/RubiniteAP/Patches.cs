@@ -170,4 +170,21 @@ namespace RubiniteAP
             }
         }
     }
+
+    [HarmonyPatch(typeof(CreateTalismanSelection), "Create")]
+    internal static class CreateTalismanSelectionPatch
+    {
+        private static void Postfix(CreateTalismanSelection __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge != null && bridge.ApRunActive)
+            {
+                // Pass the display name to match with the APWorld titles
+                bridge.HandleShopPurchase(__instance.talismanData.DisplayName);
+                
+                // Re-lock it immediately in the game data so it doesn't stay permanently unlocked
+                __instance.talismanData.state.SetValue(AchievementState.Lock);
+            }
+        }
+    }
 }

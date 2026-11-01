@@ -63,6 +63,12 @@ class RubiniteWorld(World):
                     "locations": location_ids,
                 }
             )
+        
+        shop_location_ids = {
+            title: locations.LOCATION_NAME_TO_ID[data.shop_location_name(title)]
+            for title, _ in data.TALISMANS
+        }
+
         return {
             "version": 2,
             "goal_boss": self.get_goal_boss_key(),
@@ -71,6 +77,7 @@ class RubiniteWorld(World):
             "boss_scene_map": self._boss_scene_map,
             "required_rank": self.options.required_rank.value,
             "player_color": self.options.player_color.current_key,
+            "shop_locations": shop_location_ids,
             "enabled_checks": enabled_slugs,
         }
     

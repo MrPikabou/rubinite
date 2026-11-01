@@ -15,10 +15,15 @@ if TYPE_CHECKING:
 
 def create_and_connect_regions(world: RubiniteWorld) -> None:
     challenge_area = Region("Challenge Area", world.player, world.multiworld)
-    regions = [challenge_area]
+    shop_region = Region("Wichiwi Shop", world.player, world.multiworld)
+    
+    regions = [challenge_area, shop_region]
+    
     for _key, boss_name, _level, _sigil in data.BOSSES:
         regions.append(Region(boss_name, world.player, world.multiworld))
     world.multiworld.regions += regions
+
+    challenge_area.connect(shop_region, "Challenge Area to Wichiwi Shop")
 
     for key, boss_name, _level, _vanilla_sigil in data.BOSSES:
         boss_region = world.get_region(boss_name)

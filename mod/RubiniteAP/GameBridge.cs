@@ -28,6 +28,7 @@ namespace RubiniteAP
         private readonly Dictionary<string, string> _skillItemByTreeId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _bossSceneMap = new Dictionary<string, string>();
         private readonly Dictionary<string, (string sigil, bool start)> _bossSlotInfoByLevel = new Dictionary<string, (string, bool)>();
+        private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
         private readonly HashSet<string> _enabledChecks = new HashSet<string>();
 
         private bool _needsFullLock;
@@ -100,6 +101,17 @@ namespace RubiniteAP
                     if (long.TryParse(property.Value.ToString(), out var id))
                         _itemNames[id] = property.Name;
                 }
+            }
+
+            _shopLocationIds.Clear();
+            if (info.SlotData?["shop_locations"] is JObject shopLocs)
+            {
+                foreach (var prop in shopLocs.Properties())
+                {
+                    if (long.TryParse(prop.Value.ToString(), out var id))
+                        _shopLocationIds[prop.Name] = id;
+                }
+                AddLog("Shop locations loaded (" + _shopLocationIds.Count + " entries).");
             }
 
             _bossSceneMap.Clear();
@@ -213,6 +225,13 @@ namespace RubiniteAP
                 }
                 State.AddItem(name);
                 added.Add(name);
+
+                if (name == "Blood Dust" && GameSetting.Instance != null && GameSetting.Instance.dustFlag != null)
+                {
+                    int currentDust = GameSetting.Instance.dustFlag.GetValue();
+                    // Give 100 Blood Dust per item (adjust this number based on shop prices later)
+                    GameSetting.Instance.dustFlag.SetValue(currentDust + 100, "RubiniteAP");
+                }
             }
 
             if (fullInventory)
@@ -279,10 +298,22 @@ namespace RubiniteAP
                 AddLog("Run ended (returned to the title screen).");
             }
 
-            // If the run just ended, restore the original Save 999 so Vanilla isn't polluted
             if (wasActive && !ApRunActive)
             {
                 RestoreChallengeSave();
+            }
+
+            if (ApRunActive && Input.GetKeyDown(KeyCode.F10))
+            {
+                var core = GetGamePlayCore();
+                if (core != null && core.createItemMenu != null)
+                {
+                    if (sceneName == ChallengeAreaScene)
+                    {
+                        core.createItemMenu.OpenMenu();
+                        AddLog("Forced Wichiwi Shop UI to open via Hotkey.");
+                    }
+                }
             }
         }
 
@@ -466,6 +497,7 @@ namespace RubiniteAP
         /// <summary>Write item ownership into game flags, without touching instantiated skills.</summary>
         private void ApplyToFlags(bool lockUnreceived)
         {
+            if (_startingRun) return;
             var talismanOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
             if (talismanOverview != null)
             {
@@ -481,7 +513,7 @@ namespace RubiniteAP
                     else if (lockUnreceived)
                     {
                         talisman.state.SetValue(AchievementState.Lock);
-                        talisman.storeState?.SetValue(AchievementState.Lock);
+                        talisman.storeState?.SetValue(AchievementState.ReadyToUnlock); 
                         talisman.isEquipped?.SetValue(0);
                     }
                 }
@@ -620,6 +652,13 @@ namespace RubiniteAP
                     // This directly updates the player's visual appearance
                     if (SingletonScriptableObject<ItemDataOverview>.Instance != null)
                         SingletonScriptableObject<ItemDataOverview>.Instance.currentSkinIDFlag.SetValue(skinId, "RubiniteAP");
+                }
+
+                // Clear equipped talismans on start
+                var core = GetGamePlayCore();
+                if (core != null && core.equippedTalismanList != null)
+                {
+                    core.equippedTalismanList.Clear();
                 }
 
                 ApplyToFlags(true);
@@ -926,6 +965,33 @@ namespace RubiniteAP
                 case "turquoise": return "1ea4987a-70aa-47b3-b31b-c318079ae59d";
                 default:          return "";
             }
+        }
+
+        public void HandleShopPurchase(string talismanTitle)
+        {
+            if (!ApRunActive) return;
+
+            // Send the location check
+            if (_shopLocationIds.TryGetValue(talismanTitle, out long locId))
+            {
+                var newIds = new List<long> { locId };
+                if (!State.HasChecked(locId))
+                {
+                    State.AddChecked(newIds);
+                    State.Save();
+                    if (Client.IsConnected) Client.SendLocationChecks(newIds);
+                    AddLog("Shop Check: " + talismanTitle);
+                }
+            }
+            else
+            {
+                AddLog("WARNING: No shop location found for '" + talismanTitle + "'");
+            }
+
+            // Re-lock the talisman so it stays in the shop for other players/checks
+            // The game's ApplyRuntime will re-evaluate the flags and put it back to ReadyToUnlock
+            // if we haven't received it via AP yet.
+            ApplyRuntime(false);
         }
     }
 }

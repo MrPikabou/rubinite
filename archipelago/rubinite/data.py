@@ -120,6 +120,7 @@ FILLER_ITEM = "Blood Dust"
 
 # Base IDs. Location and item ranges are intentionally separate.
 LOCATION_BASE = 71000
+SHOP_LOCATION_BASE = 71100
 SIGIL_ITEM_BASE = 72000
 TALISMAN_ITEM_BASE = 72100
 SKILL_ITEM_BASE = 72200
@@ -158,3 +159,7 @@ def sigil_for_boss_key_or_fallback(key: str) -> str | None:
         if k == key:
             return sigil if sigil else BOSS_SIGIL_FALLBACK.get(key)
     return None
+
+
+def shop_location_name(title: str) -> str:
+    return f"Wichiwi Shop: {title}"
