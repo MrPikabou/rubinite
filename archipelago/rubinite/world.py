@@ -133,7 +133,7 @@ class RubiniteWorld(World):
             return keys[value]
         return "Witch2"
     
-        def get_enabled_check_types(self) -> list[tuple[str, str]]:
+    def get_enabled_check_types(self) -> list[tuple[str, str]]:
         """Return the check types enabled for this seed. 'First Clear' is always on."""
         enabled: list[tuple[str, str]] = [("First Clear", "first")]
         if self.options.enable_nohit_clear.value:
