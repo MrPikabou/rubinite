@@ -37,14 +37,19 @@ def _build_names() -> dict[str, int]:
         names[data.talisman_item_name(title)] = data.TALISMAN_ITEM_BASE + i
     for i, (tree_id, title) in enumerate(data.SKILLS):
         names[data.skill_item_name(tree_id, title)] = data.SKILL_ITEM_BASE + i
-    names[data.FILLER_ITEM] = data.FILLER_ITEM_ID
+    for name, id_offset, _w, _d, _i in data.FILLER_ITEMS:
+        names[name] = data.FILLER_ITEM_BASE + id_offset
+    names[data.SHOP_EXPANSION_ITEM] = data.SHOP_EXPANSION_ITEM_ID
     return names
 
 
 ITEM_NAME_TO_ID = _build_names()
 
-# ALL sigils can be upgraded—including the fallback sigils, once they're in the pool.
-PROGRESSION_ITEMS = set(SIGIL_IDS.keys())
+# All sigils are progression. Shop Expansions are progression too, because the
+# shop locations they unlock can themselves contain progression (further sigils
+# or more Shop Expansions). Everything else is useful or filler.
+PROGRESSION_ITEMS = set(SIGIL_IDS.keys()) | {data.SHOP_EXPANSION_ITEM}
+FILLER_ITEM_NAMES = {name for name, _id, _w, _d, _i in data.FILLER_ITEMS}
 
 
 class RubiniteItem(Item):
@@ -54,15 +59,17 @@ class RubiniteItem(Item):
 def create_item_with_correct_classification(world: RubiniteWorld, name: str) -> RubiniteItem:
     if name in PROGRESSION_ITEMS:
         classification = ItemClassification.progression
-    elif name == data.FILLER_ITEM:
+    elif name in FILLER_ITEM_NAMES:
         classification = ItemClassification.filler
     else:
         classification = ItemClassification.useful
     return RubiniteItem(name, classification, ITEM_NAME_TO_ID[name], world.player)
 
 
-def get_random_filler_item_name(_world: RubiniteWorld) -> str:
-    return data.FILLER_ITEM
+def get_random_filler_item_name(world: RubiniteWorld) -> str:
+    names = [n for n, _id, _w, _d, _i in data.FILLER_ITEMS]
+    weights = [w for _n, _id, w, _d, _i in data.FILLER_ITEMS]
+    return world.random.choices(names, weights=weights, k=1)[0]
 
 
 def create_all_items(world: RubiniteWorld) -> None:
@@ -73,16 +80,22 @@ def create_all_items(world: RubiniteWorld) -> None:
         sigil = data.sigil_for_boss_key_or_fallback(key)
         if sigil:
             itempool.append(world.create_item(sigil))
-    for title, _talisman_id in data.TALISMANS:
-        itempool.append(world.create_item(data.talisman_item_name(title)))
+
+    # Skills before talismans: if trimming is needed, permanent skill-tree
+    # upgrades are more impactful than single-slot talisman perks. A trimmed
+    # talisman can still be bought in the shop (its location check still fires,
+    # granting an AP item) — it just can't be equipped.
     for tree_id, title in data.SKILLS:
         itempool.append(world.create_item(data.skill_item_name(tree_id, title)))
+    for title, _talisman_id in data.TALISMANS:
+        itempool.append(world.create_item(data.talisman_item_name(title)))
+
+    if world.options.progressive_shop.value:
+        for _ in range(data.SHOP_GROUPS):
+            itempool.append(world.create_item(data.SHOP_EXPANSION_ITEM))
 
     unfilled_locations = len(world.multiworld.get_unfilled_locations(world.player))
 
-    # Trim useful items if the pool exceeds available locations.
-    # Sigils are progression and must never be dropped. Talismans and skills
-    # are useful, so trimming them keeps the seed solvable.
     if len(itempool) > unfilled_locations:
         progression = [i for i in itempool if i.advancement]
         useful = [i for i in itempool if not i.advancement]

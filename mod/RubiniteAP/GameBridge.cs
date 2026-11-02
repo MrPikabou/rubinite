@@ -25,13 +25,25 @@ namespace RubiniteAP
         public readonly List<string> LogLines = new List<string>();
 
         private readonly Dictionary<long, string> _itemNames = new Dictionary<long, string>();
+        private readonly Dictionary<int, string> _playerNames = new Dictionary<int, string>();
+
         private readonly Dictionary<string, string> _talismanItemByDataId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _skillItemByTreeId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _bossSceneMap = new Dictionary<string, string>();
         private readonly Dictionary<string, (string sigil, bool start)> _bossSlotInfoByLevel = new Dictionary<string, (string, bool)>();
-        private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
-        private readonly HashSet<string> _enabledChecks = new HashSet<string>();
+        private readonly Dictionary<string, Sprite> _bossSteleByLevel = new Dictionary<string, Sprite>();
 
+        private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
+        private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
+        private readonly Dictionary<string, string> _scoutedShopItems = new Dictionary<string, string>();
+        private readonly Dictionary<string, int> _scoutedShopFlags = new Dictionary<string, int>();
+        private readonly Dictionary<string, int> _fillerDustValues = new Dictionary<string, int>();
+        private readonly Dictionary<string, string> _fillerIconNames = new Dictionary<string, string>();
+
+        private readonly HashSet<string> _crossGameScoutedTitles = new HashSet<string>();
+        private readonly HashSet<string> _enabledChecks = new HashSet<string>();
+        
+        private int _mySlot;
         private bool _needsFullLock;
         private bool _startingRun;
         private int _messageCount;
@@ -45,6 +57,8 @@ namespace RubiniteAP
         private int _requiredRankIndex = 0;
 
         private string _playerColorKey = "default";
+
+        private bool _shopProgressionEnabled;
 
         public event Action LogChanged;
 
@@ -65,6 +79,7 @@ namespace RubiniteAP
             Client.Connected += OnConnected;
             Client.ItemsReceived += OnItemsReceived;
             Client.ConnectionChanged += OnConnectionChanged;
+            Client.LocationScouted += OnLocationScouted;
             Client.Log += AddLog;
         }
 
@@ -113,6 +128,51 @@ namespace RubiniteAP
                         _shopLocationIds[prop.Name] = id;
                 }
                 AddLog("Shop locations loaded (" + _shopLocationIds.Count + " entries).");
+            }
+
+            if (_shopLocationIds.Count > 0)
+            {
+                Client.RequestLocationScouts(_shopLocationIds.Values);
+                AddLog("Requested scouts for " + _shopLocationIds.Count + " shop slots.");
+            }
+
+            _fillerDustValues.Clear();
+            _fillerIconNames.Clear();
+            if (info.SlotData?["filler_items"] is JArray fillerArr)
+            {
+                foreach (var entry in fillerArr)
+                {
+                    var name = entry["name"]?.ToString();
+                    var dust = entry["dust"]?.Value<int>() ?? 0;
+                    var icon = entry["icon"]?.ToString();
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        _fillerDustValues[name] = dust;
+                        if (!string.IsNullOrEmpty(icon))
+                            _fillerIconNames[name] = icon;
+                    }
+                }
+                if (_fillerDustValues.Count > 0)
+                    AddLog("Filler items loaded (" + _fillerDustValues.Count + " entries).");
+            }
+
+            _shopProgressionEnabled = info.SlotData?["progressive_shop"]?.Value<bool>() ?? false;
+            _shopGroupByTalisman.Clear();
+            if (_shopProgressionEnabled && info.SlotData?["shop_groups"] is JArray shopGroupsArr)
+            {
+                for (int i = 0; i < shopGroupsArr.Count; i++)
+                {
+                    if (shopGroupsArr[i] is JArray group)
+                    {
+                        foreach (var t in group)
+                        {
+                            var id = t?.ToString();
+                            if (!string.IsNullOrEmpty(id))
+                                _shopGroupByTalisman[id] = i;
+                        }
+                    }
+                }
+                AddLog("Shop progression enabled: " + shopGroupsArr.Count + " groups.");
             }
 
             _bossSceneMap.Clear();
@@ -187,6 +247,14 @@ namespace RubiniteAP
             StatusMessage = "Connected as " + slot + (string.IsNullOrEmpty(info.SeedName) ? "" : " (" + info.SeedName + ")");
             AddLog(StatusMessage);
 
+            _mySlot = info.Slot;
+            _playerNames.Clear();
+            foreach (var kv in info.Players)
+                _playerNames[kv.Key] = kv.Value;
+
+            if (_playerNames.Count > 1)
+                AddLog("Player names loaded (" + _playerNames.Count + " players).");
+
             if (State.Checked.Count > 0)
                 Client.SendLocationChecks(State.Checked);
             if (State.GoalSent)
@@ -195,6 +263,152 @@ namespace RubiniteAP
             if (ApRunActive)
                 ApplyRuntime(_needsFullLock);
             _needsFullLock = false;
+        }
+
+        private void OnLocationScouted(long locationId, long itemId, int playerId, string serverName, int flags)
+        {
+            string title = null;
+            foreach (var kv in _shopLocationIds)
+            {
+                if (kv.Value == locationId) { title = kv.Key; break; }
+            }
+            if (title == null) return;
+
+            string display;
+            if (_itemNames.TryGetValue(itemId, out var local) && !string.IsNullOrEmpty(local))
+                display = local;
+            else if (!string.IsNullOrEmpty(serverName))
+                display = serverName;
+            else
+                display = "Item #" + itemId;
+
+            bool isCrossGame = playerId != _mySlot;
+            if (isCrossGame && _playerNames.TryGetValue(playerId, out var otherName))
+                display = otherName + "'s " + display;
+
+            if (isCrossGame)
+                _crossGameScoutedTitles.Add(title);
+            else
+                _crossGameScoutedTitles.Remove(title);
+
+            _scoutedShopItems[title] = display;
+            _scoutedShopFlags[title] = flags;
+            AddLog("Scouted: '" + title + "' -> '" + display + "'");
+        }
+
+        public bool TryGetScoutedShopItem(string talismanTitle, out string itemName)
+            => _scoutedShopItems.TryGetValue(talismanTitle, out itemName);
+
+        public bool IsCrossGameShopItem(string talismanTitle)
+            => _crossGameScoutedTitles.Contains(talismanTitle);
+
+        /// <summary>
+        /// Resolves title / description / icon for an AP item that sits in a shop slot.
+        /// Talismans inherit the real TalismanData text; everything else gets a short
+        /// generic Archipelago text appropriate for its kind.
+        /// </summary>
+        public bool TryGetShopDescription(string talismanTitle, string apItemName, out string title, out string description, out Sprite icon, out int notchCount)
+        {
+            title = apItemName;
+            description = null;
+            icon = null;
+            notchCount = 0;
+
+            if (string.IsNullOrEmpty(apItemName)) return false;
+
+            // Cross-game item → generic text classified by AP item flags
+            if (_crossGameScoutedTitles.Contains(talismanTitle))
+            {
+                int flags = _scoutedShopFlags.TryGetValue(talismanTitle, out var f) ? f : 0;
+                string kind;
+                if ((flags & 1) != 0)      kind = "a progression item that another player needs to finish their game";
+                else if ((flags & 2) != 0) kind = "a useful item for another player";
+                else if ((flags & 4) != 0) kind = "a trap that may hinder another player";
+                else                       kind = "a filler item for another player";
+
+                description = $"An item from another world — {kind}.";
+                icon = PickIconForItem(apItemName, isCrossGame: true);
+                return true;
+            }
+
+            if (apItemName.StartsWith("Talisman: "))
+            {
+                var overview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+                if (overview != null)
+                {
+                    foreach (var tal in overview.GetAllData())
+                    {
+                        if (tal == null || string.IsNullOrEmpty(tal.DisplayName)) continue;
+                        if (_talismanItemByDataId.TryGetValue(tal.DisplayName, out var mapped)
+                            && mapped == apItemName)
+                        {
+                            title = tal.titleTerm != null ? tal.titleTerm.GetSentence() : apItemName;
+                            description = tal.detailTerm != null ? tal.detailTerm.GetSentence() : "";
+                            icon = tal.Icon;
+                            notchCount = tal.expendNotche;
+                            return true;
+                        }
+                    }
+                }
+                description = "A talisman. Equip it to gain its effect.";
+                icon = PickIconForItem(apItemName);
+                return true;
+            }
+
+            if (apItemName.EndsWith(" Sigil"))
+            {
+                description = "A boss sigil from another world. "
+                            + "It unlocks a boss portal in the Challenge Area.";
+                icon = PickIconForItem(apItemName);
+                return true;
+            }
+
+            if (_fillerDustValues.TryGetValue(apItemName, out int fillerDust))
+            {
+                description = $"A filler item from another world. "
+                            + $"It grants {fillerDust} Blood Dust.";
+                icon = PickIconForItem(apItemName);
+                return true;
+            }
+
+            if (apItemName == "Shop Expansion")
+            {
+                description = "A shop expansion from another world. "
+                            + "It unlocks a new group of Shop Slots at Wichiwi's Shop.";
+                icon = PickIconForItem(apItemName);
+                return true;
+            }
+
+            if (apItemName.StartsWith("Skill "))
+            {
+                int colonIdx = apItemName.IndexOf(": ");
+                title = colonIdx > 0 ? apItemName.Substring(colonIdx + 2) : apItemName;
+
+                var skillDesc = LookupSkillDescription(apItemName);
+                description = !string.IsNullOrEmpty(skillDesc)
+                    ? skillDesc
+                    : "A skill-tree upgrade. Received via Archipelago.";
+
+                icon = PickIconForItem(apItemName);
+                return true;
+            }
+
+            description = "An item from another world.";
+            icon = PickIconForItem(apItemName);
+            return true;
+        }
+
+        private bool IsShopGroupUnlocked(string talismanDisplayName)
+        {
+            if (!_shopProgressionEnabled) return true;
+            if (!_shopGroupByTalisman.TryGetValue(talismanDisplayName, out int groupIndex))
+                return true;
+
+            int expansions = 0;
+            foreach (var item in State.Items)
+                if (item == "Shop Expansion") expansions++;
+
+            return expansions > groupIndex;
         }
 
         private void OnItemsReceived(int index, List<NetworkItem> items)
@@ -227,11 +441,11 @@ namespace RubiniteAP
                 State.AddItem(name);
                 added.Add(name);
 
-                if (name == "Blood Dust" && GameSetting.Instance != null && GameSetting.Instance.dustFlag != null)
+                if (_fillerDustValues.TryGetValue(name, out int dustValue)
+                    && GameSetting.Instance?.dustFlag != null)
                 {
                     int currentDust = GameSetting.Instance.dustFlag.GetValue();
-                    // Give 100 Blood Dust per item (adjust this number based on shop prices later)
-                    GameSetting.Instance.dustFlag.SetValue(currentDust + 100, "RubiniteAP");
+                    GameSetting.Instance.dustFlag.SetValue(currentDust + dustValue, "RubiniteAP");
                 }
             }
 
@@ -368,16 +582,15 @@ namespace RubiniteAP
             {
                 AddLog("=== SCANNING UI ASSETS ===");
 
-                // 1. Scan SpriteRenderers (sprites)
+                // (a) Bestehender Scan — bleibt
                 var sprites = Resources.FindObjectsOfTypeAll<SpriteRenderer>();
                 foreach (var sr in sprites)
                 {
                     if (sr == null || sr.sprite == null || !sr.gameObject.scene.IsValid()) continue;
-                    if (!sr.gameObject.activeInHierarchy) continue; // ignore hidden
-                    AddLog($"SR: GameObject='{sr.gameObject.name}', Sprite='{sr.sprite.name}', Scale={sr.transform.lossyScale}");
+                    if (!sr.gameObject.activeInHierarchy) continue;
+                    AddLog($"SR: GameObject='{sr.gameObject.name}', Sprite='{sr.sprite.name}'");
                 }
 
-                // 2. Scan Unity UI Images
                 var images = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>();
                 foreach (var img in images)
                 {
@@ -386,13 +599,125 @@ namespace RubiniteAP
                     AddLog($"UI.Image: GameObject='{img.gameObject.name}', Sprite='{img.sprite.name}'");
                 }
 
-                // 3. Scan TextMeshPro labels
                 var tmps = Resources.FindObjectsOfTypeAll<TMPro.TextMeshProUGUI>();
                 foreach (var tmp in tmps)
                 {
                     if (tmp == null || !tmp.gameObject.scene.IsValid()) continue;
                     if (!tmp.gameObject.activeInHierarchy) continue;
                     AddLog($"TMP: GameObject='{tmp.gameObject.name}', Text='{tmp.text}'");
+                }
+
+                // (b) NEU: alle BossStele_* Sprites (auch die gerade nicht gerenderten)
+                AddLog("--- BossStele sprites ---");
+                var seenBoss = new HashSet<string>();
+                foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
+                {
+                    if (s == null || string.IsNullOrEmpty(s.name)) continue;
+                    if (s.name.StartsWith("BossStele_") && seenBoss.Add(s.name))
+                        AddLog($"SPRITE: '{s.name}' ({s.rect.width}x{s.rect.height})");
+                }
+
+                // (c) NEU: UI_Crystal_* (Blood-Dust-Icons)
+                AddLog("--- UI_Crystal sprites ---");
+                var seenCrystal = new HashSet<string>();
+                foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
+                {
+                    if (s == null || string.IsNullOrEmpty(s.name)) continue;
+                    if (s.name.StartsWith("UI_Crystal_") && seenCrystal.Add(s.name))
+                        AddLog($"SPRITE: '{s.name}'");
+                }
+
+                AddLog("--- SkillTreeData structure (full) ---");
+                // (d)
+                var skOver = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+                if (skOver != null && skOver.GetAllData() != null)
+                {
+                    SkillTreeData sample = null;
+                    foreach (var t in skOver.GetAllData()) { if (t != null) { sample = t; break; } }
+                    if (sample != null)
+                    {
+                        var flags = System.Reflection.BindingFlags.Public
+                                | System.Reflection.BindingFlags.NonPublic
+                                | System.Reflection.BindingFlags.Instance
+                                | System.Reflection.BindingFlags.FlattenHierarchy;
+
+                        AddLog($"SKILL SAMPLE: DisplayName='{sample.DisplayName}'");
+                        AddLog("--- TREE FIELDS ---");
+                        foreach (var f in sample.GetType().GetFields(flags))
+                        {
+                            object val = null;
+                            try { val = f.GetValue(sample); } catch { }
+                            string typeName = f.FieldType.Name;
+                            if (val == null) { AddLog($"  F.{f.Name} ({typeName}) = null"); continue; }
+                            if (val is Sprite sp) AddLog($"  F.{f.Name} ({typeName}) = Sprite('{sp.name}')");
+                            else if (val is UnityEngine.Object uo) AddLog($"  F.{f.Name} ({typeName}) = '{uo.name}'");
+                            else AddLog($"  F.{f.Name} ({typeName}) = {val}");
+                        }
+                        AddLog("--- TREE PROPERTIES ---");
+                        // NEW: recursive scan of skillName and secondRunSkillName
+                        foreach (var fieldName in new[] { "skillName", "secondRunSkillName" })
+                        {
+                            var sn = GetFieldOrProperty(sample, fieldName);
+                            if (sn == null)
+                            {
+                                AddLog($"--- {fieldName}: null ---");
+                                continue;
+                            }
+
+                            AddLog($"--- {fieldName} ({sn.GetType().Name}) ---");
+                            var snFlags = System.Reflection.BindingFlags.Public
+                                    | System.Reflection.BindingFlags.NonPublic
+                                    | System.Reflection.BindingFlags.Instance
+                                    | System.Reflection.BindingFlags.FlattenHierarchy;
+
+                            foreach (var f in sn.GetType().GetFields(snFlags))
+                            {
+                                object val = null;
+                                try { val = f.GetValue(sn); } catch { }
+                                if (val == null) { AddLog($"  {fieldName}.F.{f.Name} ({f.FieldType.Name}) = null"); continue; }
+                                if (val is UnityEngine.Object uo) AddLog($"  {fieldName}.F.{f.Name} ({f.FieldType.Name}) = '{uo.name}'");
+                                else AddLog($"  {fieldName}.F.{f.Name} ({f.FieldType.Name}) = {val}");
+                            }
+                            foreach (var p in sn.GetType().GetProperties(snFlags))
+                            {
+                                if (p.GetIndexParameters().Length > 0) continue;
+                                object val = null;
+                                try { val = p.GetValue(sn); } catch { }
+                                if (val == null) continue;
+                                if (val is UnityEngine.Object uo) AddLog($"  {fieldName}.P.{p.Name} ({p.PropertyType.Name}) = '{uo.name}'");
+                                else AddLog($"  {fieldName}.P.{p.Name} ({p.PropertyType.Name}) = {val}");
+                            }
+                        }
+                    }
+                }
+
+                // (e) Skill tree icons — finds every sprite whose name looks like a skill icon
+                AddLog("--- SkillFrame → Icon mapping ---");
+                var seenMap = new HashSet<string>();
+                foreach (var img in Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>())
+                {
+                    if (img == null || !img.gameObject.scene.IsValid()) continue;
+                    if (img.gameObject.name != "Icon") continue;
+                    if (img.sprite == null) continue;
+                    if (!img.sprite.name.StartsWith("SkillsTreeIcon_")) continue;
+                    if (img.sprite.name.StartsWith("SkillsTreeIcon_2_")) continue;
+                    if (img.sprite.name.StartsWith("SkillsTreeIcon_frame_")) continue;
+                    if (img.sprite.name.StartsWith("SkillsTreeIcon_big_")) continue;
+
+                    // Walk up the full chain, building "RootFrame > ... > IconMask > Icon"
+                    var chain = new List<string>();
+                    var t = img.transform;
+                    while (t != null)
+                    {
+                        chain.Insert(0, t.name);
+                        t = t.parent;
+                    }
+                    var path = string.Join(" > ", chain);
+                    var key = img.sprite.name;
+                    if (seenMap.Add(key + "|" + path))
+                    {
+                        AddLog($"SKILLMAP: '{path}' = '{img.sprite.name}'");
+                    }
                 }
 
                 AddLog("=== SCAN COMPLETE ===");
@@ -588,37 +913,42 @@ namespace RubiniteAP
                 {
                     if (talisman == null || talisman.state == null)
                         continue;
-                        
+
                     // Filter out placeholder items so they never appear in the shop
                     string displayName = talisman.DisplayName;
-                    if (string.IsNullOrEmpty(displayName) 
-                        || displayName.Contains("Exhibition") 
+                    if (string.IsNullOrEmpty(displayName)
+                        || displayName.Contains("Exhibition")
                         || displayName.Contains("TalismanData_")
                         || displayName == "X19_Shield"
                         || displayName == "無")
                         continue;
 
-                    if (IsReceivedTalisman(talisman))
-                    {
+                    bool received = IsReceivedTalisman(talisman);
+                    bool isPurchased = _shopLocationIds.TryGetValue(displayName, out long locId)
+                                    && State.HasChecked(locId);
+                    bool groupUnlocked = IsShopGroupUnlocked(displayName);
+
+                    // Ownership (state) — can the player equip this?
+                    if (received)
                         talisman.state.SetValue(AchievementState.Unlock);
-                        talisman.storeState?.SetValue(AchievementState.Unlock);
-                    }
                     else if (lockUnreceived)
-                    {
                         talisman.state.SetValue(AchievementState.Lock);
-                        
-                        // Check if the player already bought this in the shop
-                        bool isPurchased = false;
-                        if (_shopLocationIds.TryGetValue(displayName, out long locId))
-                        {
-                            isPurchased = State.HasChecked(locId);
-                        }
-                        
-                        // If purchased, lock it completely so it disappears from the shop. 
-                        // Otherwise, make it available for purchase.
-                        talisman.storeState?.SetValue(isPurchased ? AchievementState.Lock : AchievementState.ReadyToUnlock); 
+
+                    // Shop visibility (storeState)
+                    // - Purchased → hide (already own it)
+                    // - Group locked → hide (Shop Expansion not received yet)
+                    // - Received → show as owned
+                    // - Otherwise → show as buyable
+                    if (isPurchased || !groupUnlocked)
+                        talisman.storeState?.SetValue(AchievementState.Lock);
+                    else if (received)
+                        talisman.storeState?.SetValue(AchievementState.Unlock);
+                    else
+                        talisman.storeState?.SetValue(AchievementState.ReadyToUnlock);
+
+                    // Reset equipped flag only during a full lock pass for items we don't own
+                    if (!received && lockUnreceived)
                         talisman.isEquipped?.SetValue(0);
-                    }
                 }
             }
 
@@ -823,6 +1153,13 @@ namespace RubiniteAP
                 if (point == null || point.gameObject == null || !point.gameObject.scene.IsValid())
                     continue;
                 var level = point.levelName != null ? point.levelName.displayName : null;
+                if (string.IsNullOrEmpty(level))
+                    continue;
+
+                var iconSprite = FindBossIconInPoint(point);
+                if (iconSprite != null)
+                    _bossSteleByLevel[level] = iconSprite;
+
                 var boss = GameData.FindByLevel(level);
                 if (boss == null)
                     continue;
@@ -839,6 +1176,118 @@ namespace RubiniteAP
                 {
                     point.onEnableLoadLevel.gameObject.SetActive(false);
                 }
+            }
+        }
+
+        private static Sprite FindBossIconInPoint(ChallengeLevelPoint point)
+        {
+            if (point == null) return null;
+            foreach (var sr in point.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr == null || sr.sprite == null) continue;
+                if (!sr.sprite.name.StartsWith("BossStele_")) continue;
+                if (sr.sprite.name == "BossStele_0") continue;   // 70×66 Stele, kein Icon
+                return sr.sprite;
+            }
+            return null;
+        }
+
+        private Sprite FindBossSteleSprite(string bossKey)
+        {
+            var level = LevelForBossKey(bossKey);
+            if (string.IsNullOrEmpty(level)) return null;
+            return _bossSteleByLevel.TryGetValue(level, out var sprite) ? sprite : null;
+        }
+
+        private static string SigilToBossKey(string sigilItemName)
+        {
+            switch (sigilItemName)
+            {
+                case "Beast Sigil":         return "Beast";
+                case "Guardian Sigil":      return "Guardian";
+                case "Cult Sigil":          return "Cult";
+                case "Gravekeeper Sigil":   return "Gravekeeper";
+                case "Plaguebearer Sigil":  return "PlagueRoot";
+                case "Nestling Sigil":      return "Nestling";
+                case "Faye II Sigil":       return "Guardian2";
+                case "Ghost Sigil":         return "Ghost";
+                case "Hunter Sigil":        return "Master";
+                case "EyesTree Sigil":      return "EyesTree";
+                case "Puppet Master Sigil": return "Queen";
+                case "Witch Sigil":         return "Witch";
+                case "Witch II Sigil":      return "Witch2";
+                default:                    return null;
+            }
+        }
+
+        private static string LevelForBossKey(string bossKey)
+        {
+            switch (bossKey)
+            {
+                case "Beast":       return "BeastLevel";
+                case "Guardian":    return "GuardianLevel";
+                case "Cult":        return "CultLevel";
+                case "Gravekeeper": return "PlagueLevel";
+                case "PlagueRoot":  return "PlagueRootLevel";
+                case "Nestling":    return "NestlingLevel";
+                case "Guardian2":   return "GuardianLevel2";
+                case "Ghost":       return "GhostLevel";
+                case "Master":      return "MasterLevel";
+                case "EyesTree":    return "EyesTreeLevel";
+                case "Queen":       return "QueenLevel";
+                case "Witch":       return "Witch_FirstRunLevel";
+                case "Witch2":      return "WitchLevel";
+                default:            return null;
+            }
+        }
+
+        private static Sprite GetSkillIcon(SkillTreeData tree)
+        {
+            if (tree == null || string.IsNullOrEmpty(tree.DisplayName)) return null;
+            var iconName = SkillTreeIconName(tree.DisplayName);
+            if (string.IsNullOrEmpty(iconName)) return null;
+            return FindSpriteByName(iconName);
+        }
+
+        private static string SkillTreeIconName(string treeDisplayName)
+        {
+            // Mapping derived from F12 scan of the in-game skill tree (CollectMenu).
+            // "_s" suffixed frames carried the actual icon; plain frames sometimes
+            // held the generic placeholder (SkillsTreeIcon_5). The four Pureblood
+            // Heart and three Enhanced Heal entries use that placeholder because the
+            // repeated skills share an icon slot in the game UI - if a rerun with all
+            // skills unlocked reveals real icons we can replace Icon_5 entries.
+            switch (treeDisplayName)
+            {
+                case "1_1": return "SkillsTreeIcon_1";
+                case "1_2": return "SkillsTreeIcon_23";
+                case "1_3": return "SkillsTreeIcon_18";
+                case "1_4": return "SkillsTreeIcon_8";
+
+                case "2_1": return "SkillsTreeIcon_2";
+                case "2_2": return "SkillsTreeIcon_17";
+                case "2_3": return "SkillsTreeIcon_9";
+                case "2_4": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "2_5": return "SkillsTreeIcon_19";
+                case "2_6": return "SkillsTreeIcon_16";
+                case "2_7": return "SkillsTreeIcon_5";   // Enhanced Heal (placeholder)
+
+                case "3_1": return "SkillsTreeIcon_3";
+                case "3_2": return "SkillsTreeIcon_21";
+                case "3_3": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "3_4": return "SkillsTreeIcon_16";
+                case "3_5": return "SkillsTreeIcon_5";   // Enhanced Heal (placeholder)
+                case "3_6": return "SkillsTreeIcon_15";
+                case "3_7": return "SkillsTreeIcon_8";
+
+                case "4_1": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "4_2": return "SkillsTreeIcon_22";
+                case "4_3": return "SkillsTreeIcon_5";   // Enhanced Heal (placeholder)
+                case "4_4": return "SkillsTreeIcon_20";
+                case "4_5": return "SkillsTreeIcon_24";
+                case "4_6": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+
+                default: return null;
             }
         }
 
@@ -1101,7 +1550,7 @@ namespace RubiniteAP
             ApplyRuntime(true);
         }
 
-        private Sprite LoadCustomSprite(string fileName, float targetHeight = 0f, Texture2D shapeTex = null, float forcedPpu = 0f)
+        public Sprite LoadCustomSprite(string fileName, float targetHeight = 0f, Texture2D shapeTex = null, float forcedPpu = 0f)
         {
             string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
             if (System.IO.File.Exists(path))
@@ -1348,6 +1797,182 @@ namespace RubiniteAP
             textObj.transform.localPosition = new Vector3(0.15f, 0f, 0f); 
 
             AddLog("Spawned Wichiwi AP Shop Terminal.");
+        }
+
+        public Sprite PickIconForItem(string itemName, bool isCrossGame = false)
+        {
+            if (string.IsNullOrEmpty(itemName)) return null;
+
+            // Cross-game items have no local icon — explicit flag from the scout,
+            // not a name heuristic. Vanilla names like "Mira's Shadow" would
+            // otherwise be mis-detected.
+            if (isCrossGame)
+                return LoadCustomSprite("ap_icon_unknown.png", 0.5f);
+
+            if (itemName.StartsWith("Talisman: "))
+            {
+                var overview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+                if (overview != null)
+                {
+                    foreach (var tal in overview.GetAllData())
+                    {
+                        if (tal?.Icon == null) continue;
+                        if (!string.IsNullOrEmpty(tal.DisplayName)
+                            && _talismanItemByDataId.TryGetValue(tal.DisplayName, out var mapped)
+                            && mapped == itemName)
+                        {
+                            return tal.Icon;
+                        }
+                    }
+                }
+                return LoadCustomSprite("ap_icon_talisman.png", 0.5f);
+            }
+
+            if (itemName.StartsWith("Skill "))
+            {
+                var overview = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+                if (overview != null)
+                {
+                    foreach (var tree in overview.GetAllData())
+                    {
+                        if (tree == null) continue;
+                        var treeItemName = _skillItemByTreeId.TryGetValue(tree.DisplayName, out var n) ? n : null;
+                        if (treeItemName == itemName)
+                        {
+                            var icon = GetSkillIcon(tree);
+                            if (icon != null) return icon;
+                        }
+                    }
+                }
+                return LoadCustomSprite("ap_icon_skill.png", 0.5f);
+            }
+
+            if (_fillerDustValues.ContainsKey(itemName))
+            {
+                if (_fillerIconNames.TryGetValue(itemName, out var iconName))
+                {
+                    var sprite = FindSpriteByName(iconName);
+                    if (sprite != null) return sprite;
+                }
+                return FindSpriteByName("UI_Crystal_0") ?? LoadCustomSprite("ap_icon_filler.png", 0.5f);
+            }
+
+            if (itemName == "Shop Expansion")
+                return LoadCustomSprite("ap_icon_shop.png", 0.5f);
+
+            if (itemName.EndsWith(" Sigil"))
+            {
+                var bossKey = SigilToBossKey(itemName);
+                if (!string.IsNullOrEmpty(bossKey))
+                {
+                    var sprite = FindBossSteleSprite(bossKey);
+                    if (sprite != null) return sprite;
+                }
+                return LoadCustomSprite("ap_icon_sigil.png", 0.5f);
+            }
+
+            return LoadCustomSprite("ap_icon_unknown.png", 0.5f);
+        }
+
+        private static Sprite FindSpriteByName(string name)
+        {
+            foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
+            {
+                if (s != null && s.name == name)
+                    return s;
+            }
+            return null;
+        }
+
+        private static object GetFieldOrProperty(object obj, string name)
+        {
+            if (obj == null) return null;
+            var type = obj.GetType();
+            var flags = BindingFlags.Public | BindingFlags.NonPublic
+                    | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+
+            var field = type.GetField(name, flags);
+            if (field != null)
+            {
+                try { return field.GetValue(obj); } catch { }
+            }
+            var prop = type.GetProperty(name, flags);
+            if (prop != null && prop.GetIndexParameters().Length == 0)
+            {
+                try { return prop.GetValue(obj); } catch { }
+            }
+            return null;
+        }
+
+        private static string ExtractTermString(object term)
+        {
+            if (term == null) return null;
+
+            var getSentence = term.GetType().GetMethod("GetSentence", Type.EmptyTypes);
+            if (getSentence != null)
+            {
+                try
+                {
+                    var s = getSentence.Invoke(term, null) as string;
+                    if (!string.IsNullOrEmpty(s)) return s;
+                }
+                catch { }
+            }
+
+            try
+            {
+                var s = term.ToString();
+                if (!string.IsNullOrEmpty(s) && s != term.GetType().FullName)
+                    return s;
+            }
+            catch { }
+
+            return null;
+        }
+
+        private string LookupSkillDescription(string apItemName)
+        {
+            var overview = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+            if (overview == null) return null;
+
+            foreach (var tree in overview.GetAllData())
+            {
+                if (tree == null) continue;
+                if (!_skillItemByTreeId.TryGetValue(tree.DisplayName, out var mapped) || mapped != apItemName)
+                    continue;
+
+                // Search candidates in order of likelihood. SkillName is where the
+                // term fields most likely live - we didn't scan inside it yet, so
+                // just try both direct tree fields and its nested SkillName objects.
+                var candidates = new List<object>
+                {
+                    GetFieldOrProperty(tree, "skillName"),
+                    GetFieldOrProperty(tree, "secondRunSkillName"),
+                    tree.skillTreeDataDetail,
+                    tree.secondRunSkillTreeDataDetail,
+                    tree,
+                };
+
+                var fieldNames = new[]
+                {
+                    "detailTerm", "descriptionTerm", "explainTerm", "explanationTerm",
+                    "textTerm", "bodyTerm",
+                    "description", "detail", "text",
+                    "detailText", "explainText", "descriptionText",
+                };
+
+                foreach (var candidate in candidates)
+                {
+                    if (candidate == null) continue;
+                    foreach (var name in fieldNames)
+                    {
+                        var term = GetFieldOrProperty(candidate, name);
+                        var text = ExtractTermString(term);
+                        if (!string.IsNullOrEmpty(text)) return text;
+                    }
+                }
+            }
+            return null;
         }
     }
 

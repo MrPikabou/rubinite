@@ -26,6 +26,7 @@ namespace RubiniteAP
         public string SeedName;
         public List<long> CheckedLocations = new List<long>();
         public JObject SlotData;
+        public Dictionary<int, string> Players = new Dictionary<int, string>();
     }
 
     public sealed class ApClient : IDisposable
@@ -58,6 +59,7 @@ namespace RubiniteAP
 
         public event Action<ConnectedInfo> Connected;
         public event Action<int, List<NetworkItem>> ItemsReceived;
+        public event Action<long, long, int, string, int> LocationScouted;
         public event Action<string> Log;
         public event Action<bool, string> ConnectionChanged;
 
@@ -281,6 +283,10 @@ namespace RubiniteAP
                     HandleReceivedItems(packet);
                     break;
 
+                case "LocationInfo":
+                    HandleLocationInfo(packet);
+                    break;
+
                 case "PrintJSON":
                     HandlePrintJson(packet);
                     break;
@@ -334,6 +340,22 @@ namespace RubiniteAP
                     : (_seedName ?? ""),
                 SlotData = packet["slot_data"] as JObject
             };
+            if (packet["players"] is JArray playersArr)
+            {
+                foreach (var p in playersArr)
+                {
+                    if (!(p is JObject po)) continue;
+                    var team = (int?)po["team"] ?? -1;
+                    var slot = (int?)po["slot"] ?? 0;
+                    if (team != info.Team || slot == 0) continue;
+
+                    var alias = po["alias"] is JToken a && a.Type == JTokenType.String ? (string)a : null;
+                    var name  = po["name"]  is JToken n && n.Type == JTokenType.String ? (string)n : null;
+                    var display = !string.IsNullOrEmpty(alias) ? alias : name;
+                    if (!string.IsNullOrEmpty(display))
+                        info.Players[slot] = display;
+                }
+            }
             if (packet["checked_locations"] is JArray checkedLocations)
                 foreach (var id in checkedLocations)
                     info.CheckedLocations.Add((long)id);
@@ -366,6 +388,26 @@ namespace RubiniteAP
             }
 
             Enqueue(() => ItemsReceived?.Invoke(index, list));
+        }
+
+        private void HandleLocationInfo(JObject packet)
+        {
+            if (!(packet["locations"] is JArray locations))
+                return;
+
+            foreach (var entry in locations)
+            {
+                if (!(entry is JObject obj))
+                    continue;
+                var locId    = (long?)obj["location"] ?? 0;
+                var itemId   = (long?)obj["item"] ?? 0;
+                var playerId = (int?)obj["player"] ?? 0;
+                var name     = obj["name"] is JToken n && n.Type == JTokenType.String
+                            ? (string)n : null;
+                var flags = (int?)obj["flags"] ?? 0;
+                
+                Enqueue(() => LocationScouted?.Invoke(locId, itemId, playerId, name, flags));
+            }
         }
 
         private void HandlePrintJson(JObject packet)
@@ -444,6 +486,21 @@ namespace RubiniteAP
             try { _sendTask?.Wait(250); } catch { }
             _cts?.Dispose();
             _sendSignal.Dispose();
+        }
+
+        public void RequestLocationScouts(IEnumerable<long> locations)
+        {
+            var array = new JArray();
+            foreach (var id in locations)
+                array.Add(id);
+            if (array.Count == 0)
+                return;
+            SendPacket(new JObject
+            {
+                ["cmd"] = "LocationScouts",
+                ["locations"] = array,
+                ["create_as_hint"] = 0,
+            });
         }
     }
 }

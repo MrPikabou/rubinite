@@ -80,6 +80,12 @@ class RequiredRank(Choice):
     default = 2
 
 
+class ProgressiveShop(Toggle):
+    """Shop slots are unlocked by progressive shop items."""
+    display_name = "Progressive Shop"
+    default = False
+
+
 class PlayerColor(Choice):
     """Which color/skin the player starts with."""
     display_name = "Player Color"
@@ -107,6 +113,7 @@ class RubiniteOptions(PerGameCommonOptions):
     enable_flawless_clear: EnableFlawlessClear
     enable_rank_clear: EnableRankClear
     required_rank: RequiredRank
+    progressive_shop: ProgressiveShop
     player_color: PlayerColor
 
     # Placeholders for more options to be added later:

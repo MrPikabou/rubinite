@@ -194,20 +194,129 @@ namespace RubiniteAP
         private static void Postfix(CreateTalismanSelection __instance)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge != null && bridge.ApRunActive)
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            string displayName = __instance.talismanData.DisplayName;
+
+            if (string.IsNullOrEmpty(displayName)
+                || displayName.Contains("Exhibition")
+                || displayName.Contains("TalismanData_")
+                || displayName == "X19_Shield"
+                || displayName == "無"
+                || displayName.Contains("展場"))
             {
-                string displayName = __instance.talismanData.DisplayName;
-                
-                // Destroy placeholder/dummy items so they don't appear in the shop
-                if (string.IsNullOrEmpty(displayName) 
-                    || displayName.Contains("Exhibition") 
-                    || displayName.Contains("TalismanData_")
-                    || displayName == "X19_Shield"
-                    || displayName == "無" 
-                    || displayName.Contains("展場"))
+                UnityEngine.Object.Destroy(__instance.gameObject);
+                return;
+            }
+
+            if (bridge.TryGetScoutedShopItem(displayName, out var apItemName))
+            {
+                ReplaceShopDisplay(__instance, displayName, apItemName);
+            }
+        }
+
+        private static void ReplaceShopDisplay(CreateTalismanSelection selection, string talismanDisplayName, string apItemName)
+        {
+            string displayName = apItemName;
+            if (apItemName.StartsWith("Talisman: "))
+            {
+                displayName = apItemName.Substring("Talisman: ".Length);
+            }
+            else if (apItemName.StartsWith("Skill "))
+            {
+                int colon = apItemName.IndexOf(": ");
+                if (colon > 0) displayName = apItemName.Substring(colon + 2);
+            }
+
+            foreach (var tmp in selection.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
+            {
+                if (tmp.gameObject.name == "Name_Text (TMP)")
                 {
-                    UnityEngine.Object.Destroy(__instance.gameObject);
+                    tmp.text = displayName;
+                    break;
                 }
+            }
+
+            foreach (var img in selection.GetComponentsInChildren<UnityEngine.UI.Image>(true))
+            {
+                if (img.gameObject.name != "Icon") continue;
+                var bridge = RubiniteAPPlugin.Instance?.Bridge;
+                bool isCrossGame = bridge.IsCrossGameShopItem(talismanDisplayName);
+                var sprite = bridge?.PickIconForItem(apItemName, isCrossGame);
+                if (sprite != null) img.sprite = sprite;
+                break;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(CreateTalismanSelection), "SetInformation")]
+    internal static class CreateTalismanSetInformationPatch
+    {
+        private static void Postfix(CreateTalismanSelection __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            string displayName = __instance.talismanData?.DisplayName;
+            if (string.IsNullOrEmpty(displayName)) return;
+
+            if (displayName.Contains("Exhibition")
+                || displayName.Contains("TalismanData_")
+                || displayName == "X19_Shield"
+                || displayName == "無"
+                || displayName.Contains("展場"))
+                return;
+
+            if (!bridge.TryGetScoutedShopItem(displayName, out var apItemName)) return;
+            if (!bridge.TryGetShopDescription(displayName, apItemName,
+                out var title, out var description, out var icon, out var notchCount)) return;
+
+            var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
+            if (menu == null) return;
+
+            // Set RubyTextMeshProUGUI fields via reflection (see SetRubyText below)
+            SetRubyText(menu, "informationTitleText", title);
+            SetRubyText(menu, "informationExplainText", description ?? "");
+
+            if (icon != null)
+                menu.SetTalismanInformationIcon(icon);
+
+            // Notches: show real count for talismans, hide all for other items
+            if (menu.explainNotches != null)
+            {
+                for (int i = 0; i < menu.explainNotches.Length; i++)
+                {
+                    if (menu.explainNotches[i] != null)
+                        menu.explainNotches[i].gameObject.SetActive(i < notchCount);
+                }
+            }
+        }
+
+        private static void SetRubyText(object menu, string fieldName, string value)
+        {
+            if (menu == null) return;
+            var menuType = menu.GetType();
+            var field = menuType.GetField(fieldName,
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (field == null) return;
+            var target = field.GetValue(menu);
+            if (target == null) return;
+
+            var targetType = target.GetType();
+
+            var uneditedField = targetType.GetField("uneditedText",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (uneditedField != null && uneditedField.FieldType == typeof(string))
+            {
+                uneditedField.SetValue(target, value);
+                return;
+            }
+
+            var uneditedProp = targetType.GetProperty("uneditedText",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+            if (uneditedProp != null && uneditedProp.CanWrite && uneditedProp.PropertyType == typeof(string))
+            {
+                uneditedProp.SetValue(target, value);
             }
         }
     }

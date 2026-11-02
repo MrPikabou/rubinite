@@ -78,12 +78,58 @@ class RubiniteWorld(World):
             "required_rank": self.options.required_rank.value,
             "player_color": self.options.player_color.current_key,
             "shop_locations": shop_location_ids,
+            "progressive_shop": self.options.progressive_shop.value,
+            "shop_groups": self._shop_groups,
+            "filler_items": [
+                {"name": name, "dust": dust, "icon": icon}
+                for name, _id, _w, dust, icon in data.FILLER_ITEMS
+            ],
             "enabled_checks": enabled_slugs,
         }
     
     def generate_early(self) -> None:
         self._boss_scene_map = self._compute_boss_scene_map()
         self._starting_boss_keys = self._compute_starting_bosses()
+        self._shop_groups = self._compute_shop_groups()
+        self._validate_item_location_balance()
+
+    def _validate_item_location_balance(self) -> None:
+        """Ensure progression items fit into available locations.
+
+        Right now this can never trigger (worst case is ~18 progression items
+        against ~43 locations), but it fails fast with a clear message if a
+        future change adds more progression-classified items or option
+        combinations that would otherwise crash inside the filler.
+        """
+        enabled_checks = self.get_enabled_check_types()
+        boss_locations = len(data.BOSSES) * len(enabled_checks)
+        shop_locations = len(data.TALISMANS)
+        total_locations = boss_locations + shop_locations
+
+        sigil_items = sum(
+            1 for boss in data.BOSSES
+            if boss[0] not in self._starting_boss_keys
+            and data.sigil_for_boss_key_or_fallback(boss[0]) is not None
+        )
+        shop_expansion_items = len(self._shop_groups)
+        total_progression = sigil_items + shop_expansion_items
+
+        if total_progression > total_locations:
+            raise ValueError(
+                f"Rubinite progression items ({total_progression}) exceed "
+                f"available locations ({total_locations}). "
+                f"Reduce starting_boss_count or enable more check types."
+            )
+
+    def _compute_shop_groups(self) -> list[list[str]]:
+        if not self.options.progressive_shop.value:
+            return []
+        talisman_ids = [tid for _title, tid in data.TALISMANS]
+        self.random.shuffle(talisman_ids)
+        return [
+            talisman_ids[i * data.SHOP_SLOTS_PER_GROUP:(i + 1) * data.SHOP_SLOTS_PER_GROUP]
+            for i in range(data.SHOP_GROUPS)
+        ]
     
     def _compute_starting_bosses(self) -> set[str]:
         count = self.options.starting_boss_count.value

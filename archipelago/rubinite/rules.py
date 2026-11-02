@@ -24,6 +24,19 @@ def set_all_rules(world: RubiniteWorld) -> None:
                 location = world.get_location(data.location_name(boss_name, suffix))
                 location.item_rule = _not_progression
 
+    if world.options.progressive_shop.value:
+        id_to_title = {tid: t for t, tid in data.TALISMANS}
+        for group_index, group in enumerate(world._shop_groups):
+            required = group_index + 1
+            for talisman_id in group:
+                title = id_to_title[talisman_id]
+                loc = world.get_location(data.shop_location_name(title))
+                loc.access_rule = (
+                    lambda state, c=required: state.has(
+                        data.SHOP_EXPANSION_ITEM, world.player, c
+                    )
+                )
+
     goal_key = world.get_goal_boss_key()
     goal_name = next(name for key, name, _l, _s in data.BOSSES if key == goal_key)
     world.set_completion_rule(CanReachRegion(goal_name))

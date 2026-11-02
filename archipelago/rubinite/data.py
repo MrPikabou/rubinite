@@ -115,7 +115,21 @@ SKILLS = [
     ("4-6", "Pureblood Heart"),
 ]
 
-FILLER_ITEM = "Blood Dust"
+
+# Three filler items with different dust values and drop weights.
+# Format: (name, id_offset, weight, dust_value, icon_sprite_name)
+# icon_sprite_name maps to a Sprite asset in the game (UI_Crystal_*).
+FILLER_ITEMS = [
+    ("Small Blood Crystal", 0, 60, 100, "UI_Crystal_0"),
+    ("Blood Crystal",       1, 30, 250, "UI_Crystal_1"),
+    ("Large Blood Crystal", 2, 10, 500, "UI_Crystal_2"),
+]
+
+
+SHOP_GROUPS = 6
+SHOP_SLOTS_PER_GROUP = 5
+SHOP_EXPANSION_ITEM = "Shop Expansion"
+SHOP_EXPANSION_ITEM_ID = 72400
 
 
 # Base IDs. Location and item ranges are intentionally separate.
@@ -124,7 +138,7 @@ SHOP_LOCATION_BASE = 71100
 SIGIL_ITEM_BASE = 72000
 TALISMAN_ITEM_BASE = 72100
 SKILL_ITEM_BASE = 72200
-FILLER_ITEM_ID = 72300
+FILLER_ITEM_BASE = 72300
 
 
 def location_name(boss_name: str, suffix: str) -> str:
