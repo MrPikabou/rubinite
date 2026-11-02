@@ -334,7 +334,11 @@ namespace RubiniteAP
                     {
                         var uiGroup = shopObj.transform.Find("AP_Shop_UI")?.gameObject;
                         
-                        float dist = Vector2.Distance(player.transform.position, shopObj.transform.position);
+                        // Use the interaction point instead of the shop origin
+                        var interactPoint = shopObj.transform.Find("AP_Shop_InteractPoint");
+                        Vector3 targetPos = interactPoint != null ? interactPoint.position : shopObj.transform.position;
+                        float dist = Vector2.Distance(player.transform.position, targetPos);
+
                         bool isNear = dist < 1.75f;
 
                         if (uiGroup != null && uiGroup.activeSelf != isNear)
@@ -584,6 +588,16 @@ namespace RubiniteAP
                 {
                     if (talisman == null || talisman.state == null)
                         continue;
+                        
+                    // Filter out placeholder items so they never appear in the shop
+                    string displayName = talisman.DisplayName;
+                    if (string.IsNullOrEmpty(displayName) 
+                        || displayName.Contains("Exhibition") 
+                        || displayName.Contains("TalismanData_")
+                        || displayName == "X19_Shield"
+                        || displayName == "無")
+                        continue;
+
                     if (IsReceivedTalisman(talisman))
                     {
                         talisman.state.SetValue(AchievementState.Unlock);
@@ -592,7 +606,17 @@ namespace RubiniteAP
                     else if (lockUnreceived)
                     {
                         talisman.state.SetValue(AchievementState.Lock);
-                        talisman.storeState?.SetValue(AchievementState.ReadyToUnlock); 
+                        
+                        // Check if the player already bought this in the shop
+                        bool isPurchased = false;
+                        if (_shopLocationIds.TryGetValue(displayName, out long locId))
+                        {
+                            isPurchased = State.HasChecked(locId);
+                        }
+                        
+                        // If purchased, lock it completely so it disappears from the shop. 
+                        // Otherwise, make it available for purchase.
+                        talisman.storeState?.SetValue(isPurchased ? AchievementState.Lock : AchievementState.ReadyToUnlock); 
                         talisman.isEquipped?.SetValue(0);
                     }
                 }
@@ -1049,6 +1073,8 @@ namespace RubiniteAP
         public void HandleShopPurchase(string talismanTitle)
         {
             if (!ApRunActive) return;
+            
+            AddLog("Shop Purchase Attempt: '" + talismanTitle + "'");
 
             // Send the location check
             if (_shopLocationIds.TryGetValue(talismanTitle, out long locId))
@@ -1059,7 +1085,11 @@ namespace RubiniteAP
                     State.AddChecked(newIds);
                     State.Save();
                     if (Client.IsConnected) Client.SendLocationChecks(newIds);
-                    AddLog("Shop Check: " + talismanTitle);
+                    AddLog("Shop Check Sent: '" + talismanTitle + "' (ID: " + locId + ")");
+                }
+                else
+                {
+                    AddLog("Shop Check already checked: '" + talismanTitle + "'");
                 }
             }
             else
@@ -1171,6 +1201,13 @@ namespace RubiniteAP
             GameObject shopObj = new GameObject("AP_Shop_Terminal");
             shopObj.transform.position = new Vector3(3f, 1f, 0f); 
             shopObj.transform.localScale = new Vector3(1.5f, 1.5f, 1f);
+
+             // Create an invisible interaction point at the center of the backpack
+            GameObject interactPoint = new GameObject("AP_Shop_InteractPoint");
+            interactPoint.transform.SetParent(shopObj.transform);
+            // Adjust this Y value to move the interaction area up/down
+            // Negative values move it down towards the bottom of the sprite
+            interactPoint.transform.localPosition = new Vector3(0f, -0.1f, 0f);
 
             var sr = shopObj.AddComponent<SpriteRenderer>();
             

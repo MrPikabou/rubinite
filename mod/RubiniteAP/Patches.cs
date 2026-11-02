@@ -188,6 +188,30 @@ namespace RubiniteAP
         }
     }
 
+    [HarmonyPatch(typeof(CreateTalismanSelection), "Setup")]
+    internal static class CreateTalismanSetupPatch
+    {
+        private static void Postfix(CreateTalismanSelection __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge != null && bridge.ApRunActive)
+            {
+                string displayName = __instance.talismanData.DisplayName;
+                
+                // Destroy placeholder/dummy items so they don't appear in the shop
+                if (string.IsNullOrEmpty(displayName) 
+                    || displayName.Contains("Exhibition") 
+                    || displayName.Contains("TalismanData_")
+                    || displayName == "X19_Shield"
+                    || displayName == "無" 
+                    || displayName.Contains("展場"))
+                {
+                    UnityEngine.Object.Destroy(__instance.gameObject);
+                }
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(CreateItemMenu), "Process")]
     internal static class CreateItemMenuProcessPatch
     {

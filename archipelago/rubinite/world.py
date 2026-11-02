@@ -65,8 +65,8 @@ class RubiniteWorld(World):
             )
         
         shop_location_ids = {
-            title: locations.LOCATION_NAME_TO_ID[data.shop_location_name(title)]
-            for title, _ in data.TALISMANS
+            talisman_id: locations.LOCATION_NAME_TO_ID[data.shop_location_name(title)]
+            for title, talisman_id in data.TALISMANS
         }
 
         return {
