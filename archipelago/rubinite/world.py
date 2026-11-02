@@ -78,8 +78,10 @@ class RubiniteWorld(World):
             "required_rank": self.options.required_rank.value,
             "player_color": self.options.player_color.current_key,
             "shop_locations": shop_location_ids,
-            "progressive_shop": self.options.progressive_shop.value,
             "shop_groups": self._shop_groups,
+            "progressive_shop": self.options.progressive_shop.value,
+            "shop_price_mode": self.options.shop_price_mode.current_key,
+            "shop_prices": self._shop_prices,
             "filler_items": [
                 {"name": name, "dust": dust, "icon": icon}
                 for name, _id, _w, dust, icon in data.FILLER_ITEMS
@@ -91,6 +93,7 @@ class RubiniteWorld(World):
         self._boss_scene_map = self._compute_boss_scene_map()
         self._starting_boss_keys = self._compute_starting_bosses()
         self._shop_groups = self._compute_shop_groups()
+        self._shop_prices = self._compute_shop_prices()
         self._validate_item_location_balance()
 
     def _validate_item_location_balance(self) -> None:
@@ -130,6 +133,18 @@ class RubiniteWorld(World):
             talisman_ids[i * data.SHOP_SLOTS_PER_GROUP:(i + 1) * data.SHOP_SLOTS_PER_GROUP]
             for i in range(data.SHOP_GROUPS)
         ]
+    
+    def _compute_shop_prices(self) -> dict[str, int]:
+        if self.options.shop_price_mode.value != self.options.shop_price_mode.option_randomized:
+            return {}
+        min_price = self.options.shop_price_min.value
+        max_price = self.options.shop_price_max.value
+        if min_price > max_price:
+            min_price, max_price = max_price, min_price
+        return {
+            talisman_id: self.random.randint(min_price, max_price)
+            for _title, talisman_id in data.TALISMANS
+        }
     
     def _compute_starting_bosses(self) -> set[str]:
         count = self.options.starting_boss_count.value

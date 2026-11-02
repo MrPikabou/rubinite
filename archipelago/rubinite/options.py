@@ -86,6 +86,30 @@ class ProgressiveShop(Toggle):
     default = False
 
 
+class ShopPriceMode(Choice):
+    """Use vanilla shop prices or randomize every talisman slot."""
+    display_name = "Shop Price Mode"
+    option_vanilla = 0
+    option_randomized = 1
+    default = 0
+
+
+class ShopPriceMin(Range):
+    """Minimum price per talisman slot when randomized (inclusive)."""
+    display_name = "Shop Price Min"
+    range_start = 0
+    range_end = 3000
+    default = 200
+
+
+class ShopPriceMax(Range):
+    """Maximum price per talisman slot when randomized (inclusive)."""
+    display_name = "Shop Price Max"
+    range_start = 0
+    range_end = 3000
+    default = 800
+
+
 class PlayerColor(Choice):
     """Which color/skin the player starts with."""
     display_name = "Player Color"
@@ -114,7 +138,7 @@ class RubiniteOptions(PerGameCommonOptions):
     enable_rank_clear: EnableRankClear
     required_rank: RequiredRank
     progressive_shop: ProgressiveShop
+    shop_price_mode: ShopPriceMode
+    shop_price_min: ShopPriceMin
+    shop_price_max: ShopPriceMax
     player_color: PlayerColor
-
-    # Placeholders for more options to be added later:
-    # world_switch: WorldSwitch

@@ -35,6 +35,7 @@ namespace RubiniteAP
 
         private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
+        private readonly Dictionary<string, int> _effectiveShopPrices = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _scoutedShopItems = new Dictionary<string, string>();
         private readonly Dictionary<string, int> _scoutedShopFlags = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _fillerDustValues = new Dictionary<string, int>();
@@ -56,9 +57,10 @@ namespace RubiniteAP
 
         private int _requiredRankIndex = 0;
 
-        private string _playerColorKey = "default";
-
+        private string _shopPriceMode = "vanilla";
         private bool _shopProgressionEnabled;
+
+        private string _playerColorKey = "default";
 
         public event Action LogChanged;
 
@@ -134,6 +136,19 @@ namespace RubiniteAP
             {
                 Client.RequestLocationScouts(_shopLocationIds.Values);
                 AddLog("Requested scouts for " + _shopLocationIds.Count + " shop slots.");
+            }
+
+            _shopPriceMode = info.SlotData?["shop_price_mode"]?.ToString() ?? "vanilla";
+            _effectiveShopPrices.Clear();
+            if (info.SlotData?["shop_prices"] is JObject shopPrices)
+            {
+                foreach (var prop in shopPrices.Properties())
+                {
+                    if (int.TryParse(prop.Value.ToString(), out var price))
+                        _effectiveShopPrices[prop.Name] = price;
+                }
+                if (_effectiveShopPrices.Count > 0)
+                    AddLog("Shop prices loaded (" + _effectiveShopPrices.Count + " entries, mode=" + _shopPriceMode + ").");
             }
 
             _fillerDustValues.Clear();
@@ -298,6 +313,23 @@ namespace RubiniteAP
 
         public bool TryGetScoutedShopItem(string talismanTitle, out string itemName)
             => _scoutedShopItems.TryGetValue(talismanTitle, out itemName);
+
+        /// <summary>
+        /// Returns the price the shop should charge for this slot.
+        /// Randomized mode: pre-computed price from slot_data.
+        /// Vanilla mode: the talisman's own costDust.
+        /// </summary>
+        public int GetEffectiveShopPrice(TalismanData talismanData)
+        {
+            if (talismanData == null) return 0;
+            if (_shopPriceMode == "randomized"
+                && !string.IsNullOrEmpty(talismanData.DisplayName)
+                && _effectiveShopPrices.TryGetValue(talismanData.DisplayName, out var price))
+            {
+                return price;
+            }
+            return talismanData.costDust;
+        }
 
         public bool IsCrossGameShopItem(string talismanTitle)
             => _crossGameScoutedTitles.Contains(talismanTitle);

@@ -209,6 +209,20 @@ namespace RubiniteAP
                 return;
             }
 
+            // Price display override
+            int effective = bridge.GetEffectiveShopPrice(__instance.talismanData);
+            if (effective != __instance.talismanData.costDust)
+            {
+                foreach (var tmp in __instance.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
+                {
+                    if (tmp.gameObject.name == "Cost (TMP)")
+                    {
+                        tmp.text = effective.ToString();
+                        break;
+                    }
+                }
+            }
+
             if (bridge.TryGetScoutedShopItem(displayName, out var apItemName))
             {
                 ReplaceShopDisplay(__instance, displayName, apItemName);
@@ -332,6 +346,85 @@ namespace RubiniteAP
                 return false; 
             }
             return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(CreateTalismanSelection), "Click")]
+    internal static class CreateTalismanClickPricePatch
+    {
+        private static void Prefix(CreateTalismanSelection __instance, out int __state)
+        {
+            __state = -1;
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            var td = __instance.talismanData;
+            if (td == null) return;
+
+            int effective = bridge.GetEffectiveShopPrice(td);
+            if (effective == td.costDust) return;
+
+            int original = td.costDust;
+            if (!TrySetCostDust(td, effective)) return;
+            __state = original;
+        }
+
+        private static void Postfix(CreateTalismanSelection __instance, int __state)
+        {
+            if (__state < 0) return;
+            if (__instance.talismanData != null)
+                TrySetCostDust(__instance.talismanData, __state);
+        }
+
+        internal static bool TrySetCostDust(TalismanData td, int value)
+        {
+            if (td == null) return false;
+            try
+            {
+                var type = typeof(TalismanData);
+                var field = type.GetField("costDust",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (field != null && field.FieldType == typeof(int))
+                {
+                    field.SetValue(td, value);
+                    return true;
+                }
+                var prop = type.GetProperty("costDust",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (prop != null && prop.CanWrite && prop.PropertyType == typeof(int))
+                {
+                    prop.SetValue(td, value);
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(CreateTalismanSelection), "Create")]
+    internal static class CreateTalismanCreatePricePatch
+    {
+        private static void Prefix(CreateTalismanSelection __instance, out int __state)
+        {
+            __state = -1;
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            var td = __instance.talismanData;
+            if (td == null) return;
+
+            int effective = bridge.GetEffectiveShopPrice(td);
+            if (effective == td.costDust) return;
+
+            int original = td.costDust;
+            if (!CreateTalismanClickPricePatch.TrySetCostDust(td, effective)) return;
+            __state = original;
+        }
+
+        private static void Postfix(CreateTalismanSelection __instance, int __state)
+        {
+            if (__state < 0) return;
+            if (__instance.talismanData != null)
+                CreateTalismanClickPricePatch.TrySetCostDust(__instance.talismanData, __state);
         }
     }
 }
