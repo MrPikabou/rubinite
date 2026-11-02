@@ -187,4 +187,18 @@ namespace RubiniteAP
             }
         }
     }
+
+    [HarmonyPatch(typeof(CreateItemMenu), "Process")]
+    internal static class CreateItemMenuProcessPatch
+    {
+        private static bool Prefix(CreateItemMenu __instance)
+        {
+            if (SingletonPrefab<ApplicationCore>.Instance.controller.CollectionMenu())
+            {
+                MenuCore.Instance.collectMenu.OpenCollectMenu(0);
+                return false; 
+            }
+            return true;
+        }
+    }
 }

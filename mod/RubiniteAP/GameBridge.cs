@@ -9,6 +9,7 @@ using PugTool.Unity.StringList;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using IOPath = System.IO.Path;
+using TMPro;
 
 namespace RubiniteAP
 {
@@ -303,17 +304,94 @@ namespace RubiniteAP
                 RestoreChallengeSave();
             }
 
-            if (ApRunActive && Input.GetKeyDown(KeyCode.F10))
+            // --- AP Shop Terminal Interaktion & Text-Sichtbarkeit ---
+            if (ApRunActive && sceneName == ChallengeAreaScene)
             {
+                // --- FORCE CLEAR UNEARNED TALISMANS ---
                 var core = GetGamePlayCore();
-                if (core != null && core.createItemMenu != null)
+                if (core != null && core.equippedTalismanList != null && core.equippedTalismanList.Count > 0)
                 {
-                    if (sceneName == ChallengeAreaScene)
+                    for (int i = core.equippedTalismanList.Count - 1; i >= 0; i--)
                     {
-                        core.createItemMenu.OpenMenu();
-                        AddLog("Forced Wichiwi Shop UI to open via Hotkey.");
+                        var talisman = core.equippedTalismanList[i];
+                        if (talisman != null && talisman.talismanData != null)
+                        {
+                            // If the player hasn't received this talisman via AP, remove it from the equipped list
+                            if (!IsReceivedTalisman(talisman.talismanData))
+                            {
+                                core.equippedTalismanList.RemoveAt(i);
+                            }
+                        }
                     }
                 }
+
+
+                var shopObj = GameObject.Find("AP_Shop_Terminal");
+                if (shopObj != null)
+                {
+                    var player = GetGamePlayCore()?.player;
+                    if (player != null)
+                    {
+                        var uiGroup = shopObj.transform.Find("AP_Shop_UI")?.gameObject;
+                        
+                        float dist = Vector2.Distance(player.transform.position, shopObj.transform.position);
+                        bool isNear = dist < 1.75f;
+
+                        if (uiGroup != null && uiGroup.activeSelf != isNear)
+                        {
+                            uiGroup.SetActive(isNear);
+                        }
+
+                        if (isNear && MenuCore.Instance.currentMenu == null)
+                        {
+                            if (Input.GetKeyDown(KeyCode.E))
+                            {                                
+                                var menus = Resources.FindObjectsOfTypeAll<CreateItemMenu>();
+                                if (menus != null && menus.Length > 0)
+                                {
+                                    menus[0].OpenMenu();
+                                    AddLog("Opened Wichiwi Shop via Terminal.");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- F12 DEBUG: Scan all UI sprites in the scene ---
+            // TODO Debugging, delete later
+            if (Input.GetKeyDown(KeyCode.F12))
+            {
+                AddLog("=== SCANNING UI ASSETS ===");
+
+                // 1. Scan SpriteRenderers (sprites)
+                var sprites = Resources.FindObjectsOfTypeAll<SpriteRenderer>();
+                foreach (var sr in sprites)
+                {
+                    if (sr == null || sr.sprite == null || !sr.gameObject.scene.IsValid()) continue;
+                    if (!sr.gameObject.activeInHierarchy) continue; // ignore hidden
+                    AddLog($"SR: GameObject='{sr.gameObject.name}', Sprite='{sr.sprite.name}', Scale={sr.transform.lossyScale}");
+                }
+
+                // 2. Scan Unity UI Images
+                var images = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>();
+                foreach (var img in images)
+                {
+                    if (img == null || img.sprite == null || !img.gameObject.scene.IsValid()) continue;
+                    if (!img.gameObject.activeInHierarchy) continue;
+                    AddLog($"UI.Image: GameObject='{img.gameObject.name}', Sprite='{img.sprite.name}'");
+                }
+
+                // 3. Scan TextMeshPro labels
+                var tmps = Resources.FindObjectsOfTypeAll<TMPro.TextMeshProUGUI>();
+                foreach (var tmp in tmps)
+                {
+                    if (tmp == null || !tmp.gameObject.scene.IsValid()) continue;
+                    if (!tmp.gameObject.activeInHierarchy) continue;
+                    AddLog($"TMP: GameObject='{tmp.gameObject.name}', Text='{tmp.text}'");
+                }
+
+                AddLog("=== SCAN COMPLETE ===");
             }
         }
 
@@ -420,6 +498,7 @@ namespace RubiniteAP
                     yield return new WaitForSeconds(0.4f);
                     ApplyRuntime(true);
                     RefreshPortals();
+                    SpawnShopObject();
                     AddLog("Archipelago run ready. Pick an unlocked boss portal.");
                     yield break;
                 }
@@ -988,10 +1067,277 @@ namespace RubiniteAP
                 AddLog("WARNING: No shop location found for '" + talismanTitle + "'");
             }
 
-            // Re-lock the talisman so it stays in the shop for other players/checks
-            // The game's ApplyRuntime will re-evaluate the flags and put it back to ReadyToUnlock
-            // if we haven't received it via AP yet.
-            ApplyRuntime(false);
+            // Re-lock the talisman so it disappears from the shop
+            ApplyRuntime(true);
+        }
+
+        private Sprite LoadCustomSprite(string fileName, float targetHeight = 0f, Texture2D shapeTex = null, float forcedPpu = 0f)
+        {
+            string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
+            if (System.IO.File.Exists(path))
+            {
+                try
+                {
+                    byte[] fileData = System.IO.File.ReadAllBytes(path);
+                    Texture2D tex = new Texture2D(2, 2);
+                    UnityEngine.ImageConversion.LoadImage(tex, fileData);
+
+                    tex.filterMode = FilterMode.Point;
+                    tex.wrapMode = TextureWrapMode.Clamp;
+
+                    if (shapeTex != null)
+                    {
+                        shapeTex.filterMode = FilterMode.Point;
+                        shapeTex.wrapMode = TextureWrapMode.Clamp;
+                        tex = ApplyShapeToTexture(tex, shapeTex);
+                    }
+                    
+                    float ppu = 100f;
+                    if (forcedPpu > 0f)
+                        ppu = forcedPpu;
+                    else if (targetHeight > 0f)
+                        ppu = tex.height / targetHeight; 
+
+                    return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"Failed to load {fileName}: {ex.Message}");
+                }
+            }
+            return null;
+        }
+
+        private Sprite[] LoadAndSliceSpriteSheet(string fileName, int frameCount, float targetHeight)
+        {
+            string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
+            if (System.IO.File.Exists(path))
+            {
+                try
+                {
+                    byte[] fileData = System.IO.File.ReadAllBytes(path);
+                    Texture2D tex = new Texture2D(2, 2);
+                    UnityEngine.ImageConversion.LoadImage(tex, fileData);
+
+                    tex.filterMode = FilterMode.Point;
+                    tex.wrapMode = TextureWrapMode.Clamp;
+
+                    int frameWidth = tex.width / frameCount;
+                    int frameHeight = tex.height;
+
+                    float ppu = 100f;
+                    if (targetHeight > 0f) ppu = frameHeight / targetHeight;
+
+                    Sprite[] sprites = new Sprite[frameCount];
+                    for (int i = 0; i < frameCount; i++)
+                    {
+                        sprites[i] = Sprite.Create(tex, new Rect(i * frameWidth, 0, frameWidth, frameHeight), new Vector2(0.5f, 0.5f), ppu);
+                    }
+                    return sprites;
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"Failed to load {fileName}: {ex.Message}");
+                }
+            }
+            return null;
+        }
+
+        private Texture2D ApplyShapeToTexture(Texture2D baseTex, Texture2D shapeTex)
+        {
+            Color[] basePixels = baseTex.GetPixels();
+            for (int y = 0; y < baseTex.height; y++)
+            {
+                for (int x = 0; x < baseTex.width; x++)
+                {
+                    float u = (float)x / baseTex.width;
+                    float v = (float)y / baseTex.height;
+                    
+                    Color shapeColor = shapeTex.GetPixelBilinear(u, v);
+                    
+                    int idx = y * baseTex.width + x;
+                    basePixels[idx].a = shapeColor.a; 
+                }
+            }
+            baseTex.SetPixels(basePixels);
+            baseTex.Apply();
+            return baseTex;
+        }
+
+        public void SpawnShopObject()
+        {
+            if (GameObject.Find("AP_Shop_Terminal") != null) return;
+
+            GameObject shopObj = new GameObject("AP_Shop_Terminal");
+            shopObj.transform.position = new Vector3(3f, 1f, 0f); 
+            shopObj.transform.localScale = new Vector3(1.5f, 1.5f, 1f);
+
+            var sr = shopObj.AddComponent<SpriteRenderer>();
+            
+            Sprite shopSprite = LoadCustomSprite("wichiwi_equipment.png");
+            if (shopSprite == null)
+            {
+                var talismanOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+                if (talismanOverview != null)
+                {
+                    var wichiwiTalisman = talismanOverview.FindUniqueId("15_WichiHat");
+                    if (wichiwiTalisman != null) shopSprite = wichiwiTalisman.Icon;
+                }
+            }
+            sr.sprite = shopSprite;
+            sr.color = Color.white; 
+
+            var col = shopObj.AddComponent<BoxCollider2D>();
+            col.size = sr.sprite != null ? sr.sprite.bounds.size : new Vector2(1f, 1f);
+
+            GameObject uiGroup = new GameObject("AP_Shop_UI");
+            uiGroup.transform.SetParent(shopObj.transform);
+            uiGroup.transform.localPosition = new Vector3(0f, 0.6f, -0.2f); 
+
+            GameObject bgObj = new GameObject("AP_Shop_BG");
+            var bgSr = bgObj.AddComponent<SpriteRenderer>();
+            
+            List<Sprite> bgSprites = new List<Sprite>();
+            Sprite bgBase = LoadCustomSprite("ui_background_1.png", 0.55f);
+            
+            Texture2D shape2 = null, shape3 = null;
+            string path2 = System.IO.Path.Combine(BepInEx.Paths.PluginPath, "ui_background_2.png");
+            string path3 = System.IO.Path.Combine(BepInEx.Paths.PluginPath, "ui_background_3.png");
+            if (System.IO.File.Exists(path2)) { shape2 = new Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(shape2, System.IO.File.ReadAllBytes(path2)); }
+            if (System.IO.File.Exists(path3)) { shape3 = new Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(shape3, System.IO.File.ReadAllBytes(path3)); }
+
+            if (shape2 != null) bgSprites.Add(LoadCustomSprite("ui_background_1.png", 0.55f, shape2));
+            if (shape3 != null) bgSprites.Add(LoadCustomSprite("ui_background_1.png", 0.55f, shape3));
+            if (bgBase != null) bgSprites.Add(bgBase);
+
+            if (bgSprites.Count > 0)
+            {
+                bgSr.sprite = bgSprites[0];
+                float targetWidth = 1.5f;
+                float scaleX = targetWidth / bgSr.sprite.bounds.size.x; 
+                bgObj.transform.localScale = new Vector3(scaleX, 1f, 1f);
+
+                if (bgSprites.Count > 1)
+                {
+                    var animator = bgObj.AddComponent<UIBackgroundAnimator>();
+                    animator.sprites = bgSprites.ToArray();
+                    animator.frameRate = 0.15f;
+                }
+            }
+            else
+            {
+                Texture2D bgTex = new Texture2D(1, 1);
+                bgTex.SetPixel(0, 0, new Color(0.15f, 0.1f, 0.1f, 0.85f));
+                bgTex.Apply();
+                bgSr.sprite = Sprite.Create(bgTex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+                bgObj.transform.localScale = new Vector3(2.0f, 0.6f, 1f);
+            }
+            bgSr.sortingOrder = 1000;
+            bgSr.color = new Color(1f, 1f, 1f, 0.65f);
+            bgObj.transform.SetParent(uiGroup.transform);
+            bgObj.transform.localPosition = new Vector3(0f, 0f, 0.1f);
+
+            // 3. E-Button (Load 4 individual frames with the exact same PPU to prevent jitter)
+            GameObject btnObj = new GameObject("AP_Shop_Button");
+            var btnSr = btnObj.AddComponent<SpriteRenderer>();
+            
+            List<Sprite> btnSpritesList = new List<Sprite>();
+            
+            // Load the first frame to establish the scale
+            Sprite frame1 = LoadCustomSprite("E_Button_1.png", 0.3f);
+            if (frame1 != null)
+            {
+                btnSpritesList.Add(frame1);
+                
+                // Load frames 2 to 4 using the EXACT same pixelsPerUnit as frame 1
+                for (int i = 2; i <= 4; i++)
+                {
+                    Sprite frame = LoadCustomSprite($"E_Button_{i}.png", 0f, null, frame1.pixelsPerUnit);
+                    if (frame != null) btnSpritesList.Add(frame);
+                }
+            }
+
+            // Fallback to spritesheet if individual frames don't exist
+            if (btnSpritesList.Count == 0)
+            {
+                Sprite[] sheetSprites = LoadAndSliceSpriteSheet("E_Button.png", 4, 0.4f);
+                if (sheetSprites != null) btnSpritesList.AddRange(sheetSprites);
+            }
+
+            if (btnSpritesList.Count > 0)
+            {
+                btnSr.sprite = btnSpritesList[0];
+                btnObj.transform.localScale = Vector3.one;
+                
+                if (btnSpritesList.Count > 1)
+                {
+                    var btnAnim = btnObj.AddComponent<UIBackgroundAnimator>();
+                    btnAnim.sprites = btnSpritesList.ToArray();
+                    btnAnim.frameRate = 0.12f;
+                }
+            }
+            else
+            {
+                // Fallback if no images exist
+                Texture2D redTex = new Texture2D(1, 1);
+                redTex.SetPixel(0, 0, new Color(0.8f, 0.1f, 0.1f, 1f));
+                redTex.Apply();
+                btnSr.sprite = Sprite.Create(redTex, new Rect(0,0,1,1), new Vector2(0.5f, 0.5f), 1f);
+                btnObj.transform.localScale = new Vector3(0.4f, 0.4f, 1f);
+            }
+            btnSr.sortingOrder = 1001;
+            btnObj.transform.SetParent(uiGroup.transform);
+            btnObj.transform.localPosition = new Vector3(-0.4f, 0f, 0f); 
+
+            TMPro.TMP_FontAsset gameFont = null;
+            var tmps = Resources.FindObjectsOfTypeAll<TMPro.TextMeshProUGUI>();
+            if (tmps != null && tmps.Length > 0) gameFont = tmps[0].font;
+
+            GameObject textObj = new GameObject("AP_Shop_Text");
+            var textMesh = textObj.AddComponent<TextMeshPro>();
+            
+            if (gameFont != null) textMesh.font = gameFont;
+            
+            textMesh.text = "Shop";
+            textMesh.fontSize = 2.5f;
+            textMesh.alignment = TextAlignmentOptions.Center;
+            textMesh.color = Color.white;
+            textMesh.enableWordWrapping = false;
+            
+            var textRenderer = textObj.GetComponent<MeshRenderer>();
+            if (textRenderer != null) textRenderer.sortingOrder = 1001;
+            
+            textObj.transform.SetParent(uiGroup.transform);
+            textObj.transform.localPosition = new Vector3(0.15f, 0f, 0f); 
+
+            AddLog("Spawned Wichiwi AP Shop Terminal.");
+        }
+    }
+
+    public class UIBackgroundAnimator : MonoBehaviour
+    {
+        public Sprite[] sprites;
+        public float frameRate = 0.15f;
+        private SpriteRenderer sr;
+        private float timer;
+        private int index;
+
+        void Awake()
+        {
+            sr = GetComponent<SpriteRenderer>();
+        }
+
+        void Update()
+        {
+            if (sprites == null || sprites.Length <= 1 || sr == null) return;
+            
+            timer += Time.deltaTime;
+            if (timer >= frameRate)
+            {
+                timer = 0;
+                index = (index + 1) % sprites.Length;
+                sr.sprite = sprites[index];
+            }
         }
     }
 }
