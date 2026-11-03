@@ -86,8 +86,16 @@ class ProgressiveShop(Toggle):
     default = False
 
 
+class StartingShopGroups(Range):
+    """How many shop groups are unlocked from the start when ProgressiveShop is enabled."""
+    display_name = "Starting Shop Groups"
+    range_start = 0
+    range_end = 6
+    default = 1
+
+
 class ShopPriceMode(Choice):
-    """Use vanilla shop prices or randomize every talisman slot."""
+    """Use vanilla shop prices or randomize every shop price slot."""
     display_name = "Shop Price Mode"
     option_vanilla = 0
     option_randomized = 1
@@ -99,7 +107,7 @@ class ShopPriceMin(Range):
     display_name = "Shop Price Min"
     range_start = 0
     range_end = 3000
-    default = 200
+    default = 100
 
 
 class ShopPriceMax(Range):
@@ -107,7 +115,31 @@ class ShopPriceMax(Range):
     display_name = "Shop Price Max"
     range_start = 0
     range_end = 3000
-    default = 800
+    default = 600
+
+
+class SkillPriceMode(Choice):
+    """Use vanilla skill prices or randomize every skill price slot."""
+    display_name = "Skill Price Mode"
+    option_vanilla = 0
+    option_randomized = 1
+    default = 0
+
+
+class SkillPriceMin(Range):
+    """Minimum price per skill slot when randomized (inclusive)."""
+    display_name = "Skill Price Min"
+    range_start = 0
+    range_end = 5000
+    default = 200
+
+
+class SkillPriceMax(Range):
+    """Maximum price per skill slot when randomized (inclusive)."""
+    display_name = "Skill Price Max"
+    range_start = 0
+    range_end = 5000
+    default = 700
 
 
 class PlayerColor(Choice):
@@ -138,7 +170,11 @@ class RubiniteOptions(PerGameCommonOptions):
     enable_rank_clear: EnableRankClear
     required_rank: RequiredRank
     progressive_shop: ProgressiveShop
+    starting_shop_groups: StartingShopGroups
     shop_price_mode: ShopPriceMode
     shop_price_min: ShopPriceMin
     shop_price_max: ShopPriceMax
+    skill_price_mode: SkillPriceMode
+    skill_price_min: SkillPriceMin
+    skill_price_max: SkillPriceMax
     player_color: PlayerColor
