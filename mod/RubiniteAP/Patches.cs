@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
@@ -9,11 +10,21 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(ChallengeLevelPoint), "Init")]
     internal static class ChallengeLevelPointInitPatch
     {
-        private static void Postfix(ChallengeLevelPoint __instance)
+        private static bool _refreshQueued;
+
+        private static void Postfix()
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge != null && bridge.ApRunActive)
-                bridge.RefreshPortals();
+            if (bridge == null || !bridge.ApRunActive || _refreshQueued) return;
+            _refreshQueued = true;
+            RubiniteAPPlugin.Instance.StartCoroutine(RefreshNextFrame(bridge));
+        }
+
+        private static IEnumerator RefreshNextFrame(GameBridge bridge)
+        {
+            yield return null;
+            _refreshQueued = false;
+            bridge.RefreshPortals();
         }
     }
 
@@ -428,6 +439,133 @@ namespace RubiniteAP
         }
     }
 
+    [HarmonyPatch(typeof(SkillTreeFrame), "Init")]
+    internal static class SkillTreeInitDisplayPatch
+    {
+        private static void Postfix(SkillTreeFrame __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var data = __instance.skillTreeData;
+            if (data == null) return;
+
+            // Only revert to vanilla if the CHECK is purchased.
+            bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
+            bool hasScoutedItem = bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName);
+
+            if (isPurchased || !hasScoutedItem)
+            {
+                if (__instance.icon != null) __instance.icon.rectTransform.localScale = Vector3.one;
+                if (__instance.fakeIcon != null) __instance.fakeIcon.rectTransform.localScale = Vector3.one;
+                return;
+            }
+
+            var apIcon = bridge.PickIconForItem(apItemName);
+            if (apIcon == null) return;
+
+            Vector3 scaled = apItemName.StartsWith("Skill ") ? Vector3.one : new Vector3(0.65f, 0.65f, 1f);
+
+            if (__instance.icon != null) 
+            {
+                __instance.icon.sprite = apIcon;
+                __instance.icon.rectTransform.localScale = scaled;
+            }
+            if (__instance.fakeIcon != null) 
+            {
+                __instance.fakeIcon.sprite = apIcon;
+                __instance.fakeIcon.rectTransform.localScale = scaled;
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(SkillTreeMenu), "SetSelectFrameDetailPaper")]
+    internal static class SkillTreeMenuDetailPatch
+    {
+        private static void Postfix(SkillTreeMenu __instance, SkillTreeFrame skillTreeFrame)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            if (skillTreeFrame == null) return;
+
+            var data = skillTreeFrame.skillTreeData;
+            if (data == null) return;
+
+            // Only revert to vanilla description if the CHECK is purchased.
+            bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
+            bool isUnknown = !data.isKnown.GetValue() || !skillTreeFrame.IsKnowable();
+            bool hasScoutedItem = bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName);
+
+            if (isPurchased || isUnknown || !hasScoutedItem)
+            {
+                if (__instance.selectedIcon != null) __instance.selectedIcon.rectTransform.localScale = Vector3.one;
+                return;
+            }
+
+            string apTitle = apItemName;
+            string apDesc = "An item from another world.";
+            Sprite apIcon = bridge.PickIconForItem(apItemName);
+
+            if (bridge.TryGetShopDescription(data.DisplayName, apItemName,
+                out var t, out var d, out var i, out _))
+            {
+                apTitle = t;
+                apDesc = d;
+                if (i != null) apIcon = i;
+            }
+
+            __instance.selectedTitleText.uneditedText = apTitle;
+
+            var combined = "Buying this slot sends a location check to the multiworld.\n"
+                        + "You will receive: " + apItemName + ".\n"
+                        + (apDesc ?? "");
+            __instance.selectedDescriptionText_NoVideo?.SetText(combined);
+            __instance.selectedDescriptionText_HasVideo?.SetText(combined);
+
+            if (__instance.descriptionSection_HasVideo != null)
+                __instance.descriptionSection_HasVideo.SetActive(false);
+            if (__instance.descriptionSection_NoVideo != null)
+                __instance.descriptionSection_NoVideo.SetActive(true);
+            try { __instance.videoPlayer?.Stop(); } catch { }
+
+            if (apIcon != null && __instance.selectedIcon != null)
+            {
+                __instance.selectedIcon.sprite = apIcon;
+                __instance.selectedIcon.rectTransform.localScale = new Vector3(0.8f, 0.8f, 1f);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(SkillTreeFrame), "Init")]
+    internal static class SkillTreeInitCostPatch
+    {
+        private static void Postfix(SkillTreeFrame __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var data = __instance.skillTreeData;
+            if (data == null) return;
+
+            // Cost display override
+            int price = data.cost;
+            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var p))
+                price = p;
+
+            if (price != data.cost)
+            {
+                __instance.costText?.SetText(price.ToString());
+                __instance.costText2?.SetText(price.ToString());
+            }
+
+            // Hide the "purchasable" indicator for already-bought skills.
+            if (bridge.IsSkillPurchased(data.DisplayName))
+            {
+                __instance.purchasableFrame?.SetActive(false);
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(SkillTreeFrame), "Unlock")]
     internal static class SkillTreeUnlockPatch
     {
@@ -442,27 +580,19 @@ namespace RubiniteAP
             if (string.IsNullOrEmpty(treeId)) return true;
             if (!GameData.SkillTitles.TryGetValue(treeId, out var title)) return true;
 
-            // Send the AP location check — grants an item from the pool, which
-            // may or may not be this skill.
-            bridge.HandleSkillTreePurchase(treeId, title);
+            if (bridge.IsSkillPurchased(treeId))
+                return false;
 
-            // Manually mirror everything Unlock() does EXCEPT SetSkill and
-            // isUnlocked = true. The skill stays locked until the AP item arrives.
-            var core = GamePlayCore.Instance;
-            if (core != null && core.dust != null)
-            {
-                int price = data.cost;
-                if (bridge.TryGetEffectiveSkillPrice(treeId, out var effective))
-                    price = effective;
-                core.dust.SetValue(core.dust.GetValue() - price, "RubiniteAP SkillTreePurchase");
-            }
+            int price = data.cost;
+            if (bridge.TryGetEffectiveSkillPrice(treeId, out var effective))
+                price = effective;
 
-            // Ensure the skill is visible in the tree (Vanilla does this in OnEnable
-            // for unknown skills; we mark it known so the player can see it after
-            // a purchase even if it stays locked).
-            data.skillTreeDataDetail.isKnown?.SetValue(true);
+            if (!bridge.HandleSkillTreePurchase(treeId, title, price))
+                return true;
 
-            // Play the unlock animation as visual feedback
+            // Play the unlock animation on the clicked frame as visual feedback.
+            // We no longer call UpdateAllFrame() here to avoid the white flicker 
+            // across all icons. The Update patch will handle children dynamically.
             try
             {
                 __instance.purchasableFrame?.SetActive(false);
@@ -471,28 +601,254 @@ namespace RubiniteAP
             }
             catch { }
 
-            // Do NOT call SetSkill(...)
-            // Do NOT call isUnlocked.SetValue(true)
-            // Return false so vanilla Unlock() is skipped
+            // Immediately update the clicked frame's visuals so the icon
+            // reverts from the AP item icon back to the vanilla skill icon.
+            try { __instance.Init(); }
+            catch { }
+
             return false;
         }
     }
 
-    [HarmonyPatch(typeof(SkillTreeFrame), "Init")]
-    internal static class SkillTreeInitCostPatch
+    [HarmonyPatch(typeof(SkillTreeFrame), "Update")]
+    internal static class SkillTreeFrameUpdatePatch
+    {
+        private static void Prefix(SkillTreeFrame __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            var data = __instance.skillTreeData;
+            if (data == null) return;
+
+            bool received = bridge.IsSkillReceived(data.DisplayName);
+            bool purchased = bridge.IsSkillPurchased(data.DisplayName);
+
+            // If we have the item but haven't bought the check yet, force the
+            // vanilla flag to false so the game lets us buy the check.
+            if (received && !purchased)
+            {
+                data.skillTreeDataDetail?.isUnlocked?.SetValue(false);
+                data.secondRunSkillTreeDataDetail?.isUnlocked?.SetValue(false);
+            }
+        }
+
+        private static void Postfix(SkillTreeFrame __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            var data = __instance.skillTreeData;
+            if (data == null) return;
+
+            bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
+            bool isReceived = bridge.IsSkillReceived(data.DisplayName);
+
+            // 1. Icon: revert to vanilla ONLY if purchased.
+            if (isPurchased)
+            {
+                var vanillaIcon = __instance.skillData?.Icon;
+                if (vanillaIcon != null)
+                {
+                    if (__instance.icon != null && __instance.icon.sprite != vanillaIcon)
+                    {
+                        __instance.icon.sprite = vanillaIcon;
+                        __instance.icon.rectTransform.localScale = Vector3.one;
+                    }
+                    if (__instance.fakeIcon != null && __instance.fakeIcon.sprite != vanillaIcon)
+                    {
+                        __instance.fakeIcon.sprite = vanillaIcon;
+                        __instance.fakeIcon.rectTransform.localScale = Vector3.one;
+                    }
+                }
+            }
+            else if (bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName))
+            {
+                var apIcon = bridge.PickIconForItem(apItemName);
+                if (apIcon != null)
+                {
+                    Vector3 scaled = apItemName.StartsWith("Skill ") ? Vector3.one : new Vector3(0.65f, 0.65f, 1f);
+                    if (__instance.icon != null && __instance.icon.sprite != apIcon)
+                    {
+                        __instance.icon.sprite = apIcon;
+                        __instance.icon.rectTransform.localScale = scaled;
+                    }
+                    if (__instance.fakeIcon != null && __instance.fakeIcon.sprite != apIcon)
+                    {
+                        __instance.fakeIcon.sprite = apIcon;
+                        __instance.fakeIcon.rectTransform.localScale = scaled;
+                    }
+                }
+            }
+
+            // 2. Animator state
+            var currentAnim = __instance.animatorController.currentAnimation;
+            var targetAnim = currentAnim;
+
+            if (isPurchased)
+            {
+                if (isReceived)
+                {
+                    if (currentAnim == SkillTreeFrame.SkillTreeFrameAnimationType.Disable ||
+                        currentAnim == SkillTreeFrame.SkillTreeFrameAnimationType.Lock)
+                    {
+                        targetAnim = SkillTreeFrame.SkillTreeFrameAnimationType.Unlock;
+                    }
+                }
+                else
+                {
+                    if (currentAnim != SkillTreeFrame.SkillTreeFrameAnimationType.Disable &&
+                        currentAnim != SkillTreeFrame.SkillTreeFrameAnimationType.LockToUnlock)
+                    {
+                        targetAnim = SkillTreeFrame.SkillTreeFrameAnimationType.Disable;
+                    }
+                }
+            }
+            else
+            {
+                bool unlockable = true;
+                for (int i = 0; i < __instance.needUnlocked.Length; i++)
+                {
+                    var parentData = __instance.needUnlocked[i].skillTreeData;
+                    if (parentData == null) continue;
+
+                    bool parentVanillaUnlocked = parentData.isUnlocked != null && parentData.isUnlocked.GetValue();
+                    bool parentPurchased = bridge.IsSkillPurchased(parentData.DisplayName);
+                    bool parentReceived = bridge.IsSkillReceived(parentData.DisplayName);
+
+                    if (!parentVanillaUnlocked && !parentPurchased && !parentReceived)
+                    {
+                        unlockable = false;
+                        break;
+                    }
+                }
+
+                if (unlockable)
+                {
+                    if (currentAnim == SkillTreeFrame.SkillTreeFrameAnimationType.Disable)
+                        targetAnim = SkillTreeFrame.SkillTreeFrameAnimationType.Lock;
+                }
+                else
+                {
+                    if (currentAnim == SkillTreeFrame.SkillTreeFrameAnimationType.Lock)
+                        targetAnim = SkillTreeFrame.SkillTreeFrameAnimationType.Disable;
+                }
+            }
+
+            if (targetAnim != currentAnim)
+            {
+                __instance.animatorController.ChangeAnimation(targetAnim);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(SkillTreeFrame), "CheckUnlockable")]
+    internal static class SkillTreeCheckUnlockablePatch
+    {
+        private static bool Prefix(SkillTreeFrame __instance, ref bool __result)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return true;
+
+            for (int i = 0; i < __instance.needUnlocked.Length; i++)
+            {
+                var parent = __instance.needUnlocked[i];
+                if (parent == null) continue;
+                var parentData = parent.skillTreeData;
+                if (parentData == null) continue;
+
+                bool parentVanillaUnlocked = parentData.isUnlocked != null && parentData.isUnlocked.GetValue();
+                bool parentPurchased = bridge.IsSkillPurchased(parentData.DisplayName);
+                bool parentReceived = bridge.IsSkillReceived(parentData.DisplayName);
+
+                if (!parentVanillaUnlocked && !parentPurchased && !parentReceived)
+                {
+                    __result = false;
+                    return false;
+                }
+            }
+
+            __result = true;
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(SkillTreeFrame), "OnSelect")]
+    internal static class SkillTreeFrameOnSelectPatch
     {
         private static void Postfix(SkillTreeFrame __instance)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
-
             var data = __instance.skillTreeData;
             if (data == null) return;
-            if (!bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var price)) return;
-            if (price == data.cost) return;
 
-            __instance.costText?.SetText(price.ToString());
-            __instance.costText2?.SetText(price.ToString());
+            // If the slot is already purchased, make sure the "hold to buy" ring 
+            // stays hidden, even though the game's vanilla OnSelect might try to show it.
+            if (bridge.IsSkillPurchased(data.DisplayName))
+            {
+                __instance.purchasableFrame?.SetActive(false);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(ChallengeLevelMenu), "SetLevelInformation")]
+    internal static class ChallengeLevelMenuSetLevelInformationPatch
+    {
+        private static void Postfix(ChallengeLevelMenu __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            if (__instance.currentLevelSelection == null
+                || __instance.currentLevelSelection.levelData == null) return;
+
+            var portalLevel = __instance.currentLevelSelection.levelData.DisplayName;
+            if (string.IsNullOrEmpty(portalLevel)) return;
+
+            if (bridge.TryGetMappedLevel(portalLevel, out var mappedLevel)
+                && mappedLevel != portalLevel)
+            {
+                var mappedData = SingletonScriptableObject<LevelDataOverview>.Instance
+                    .FindUniqueId(mappedLevel);
+                if (mappedData != null)
+                {
+                    if (__instance.informationBossImage != null
+                        && mappedData.MapSelect_ScenePic != null)
+                        __instance.informationBossImage.sprite = mappedData.MapSelect_ScenePic;
+
+                    if (__instance.informationLocalize != null
+                        && mappedData.detailTerm != null)
+                        __instance.informationLocalize.Term = mappedData.detailTerm.term;
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(ChallengeLevelSelection), "Setup")]
+    internal static class ChallengeLevelSelectionSetupPatch
+    {
+        private static void Postfix(ChallengeLevelSelection __instance, LevelData levelData)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var portalLevel = levelData?.DisplayName;
+            if (string.IsNullOrEmpty(portalLevel)) return;
+
+            if (bridge.TryGetMappedLevel(portalLevel, out var mappedLevel)
+                && mappedLevel != portalLevel)
+            {
+                var mappedData = SingletonScriptableObject<LevelDataOverview>.Instance
+                    .FindUniqueId(mappedLevel);
+                if (mappedData != null)
+                {
+                    if (__instance.BossLevelIcon != null
+                        && mappedData.bossIcon != null)
+                        __instance.BossLevelIcon.sprite = mappedData.bossIcon;
+
+                    if (__instance.levelNameLocalize != null
+                        && mappedData.titleTerm != null)
+                        __instance.levelNameLocalize.Term = mappedData.titleTerm.term;
+                }
+            }
         }
     }
 }

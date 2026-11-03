@@ -641,10 +641,10 @@ namespace RubiniteAP
             }
             else
             {
-                // Hold until DataPackage arrives — otherwise cross-game items
-                // will show as "Item #NNN" with no name.
-                _pendingScoutLocations = list;
-                Enqueue(() => LogLine("Queued " + list.Count + " scouts until DataPackage arrives."));
+                if (_pendingScoutLocations == null)
+                    _pendingScoutLocations = new List<long>();
+                _pendingScoutLocations.AddRange(list);
+                Enqueue(() => LogLine("Queued " + list.Count + " scouts (" + _pendingScoutLocations.Count + " total) until DataPackage arrives."));
             }
         }
 

@@ -73,6 +73,11 @@ namespace RubiniteAP
         private int _lastKnownPlayerHp = -1;
         private bool _playerDeathFired;
         private System.Reflection.MethodInfo _playerKillMethod;
+        
+        private static System.Reflection.MethodInfo _getLevelNameMethod;
+        private static bool _getLevelNameMethodSearched;
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _logQueue
+            = new System.Collections.Concurrent.ConcurrentQueue<string>();
 
         private bool DeathLinkActive =>
             ApRunActive &&
@@ -168,6 +173,12 @@ namespace RubiniteAP
                 AddLog("Skill tree locations loaded (" + _skillTreeLocationIds.Count + " entries).");
             }
 
+            if (_skillTreeLocationIds.Count > 0)
+            {
+                Client.RequestLocationScoutsWhenReady(_skillTreeLocationIds.Values);
+                AddLog("Queued scouts for " + _skillTreeLocationIds.Count + " skill tree slots.");
+            }
+
             _shopPriceMode = info.SlotData?["shop_price_mode"]?.ToString() ?? "vanilla";
             _effectiveShopPrices.Clear();
             if (info.SlotData?["shop_prices"] is JObject shopPrices)
@@ -191,7 +202,14 @@ namespace RubiniteAP
                         _effectiveSkillPrices[prop.Name] = price;
                 }
                 if (_effectiveSkillPrices.Count > 0)
+                {
                     AddLog("Skill prices loaded (" + _effectiveSkillPrices.Count + " entries, mode=" + _skillPriceMode + ").");
+                    foreach (var kv in _effectiveSkillPrices)
+                    {
+                        AddLog($"  skill price: '{kv.Key}' = {kv.Value}");
+                        break;
+                    }
+                }
             }
 
             _startingShopGroups = info.SlotData?["starting_shop_groups"]?.Value<int>() ?? 0;
@@ -233,6 +251,7 @@ namespace RubiniteAP
                     }
                 }
                 AddLog("Shop progression enabled: " + shopGroupsArr.Count + " groups.");
+                AddLog($"Progressive shop: {_shopProgressionEnabled}, starting groups: {_startingShopGroups}");
             }
 
             _bossSceneMap.Clear();
@@ -340,11 +359,16 @@ namespace RubiniteAP
 
         private void OnLocationScouted(long locationId, long itemId, int playerId, string serverName, int flags)
         {
+            // Already handled by the shop dictionary lookup, because
+            // _scoutedShopItems[title] is populated for ANY title that matches a
+            // location ID, and skill tree locations use the same title key format.
+            // Just make sure the location ID loop covers skill tree IDs too:
             string title = null;
             foreach (var kv in _shopLocationIds)
-            {
                 if (kv.Value == locationId) { title = kv.Key; break; }
-            }
+            if (title == null)
+                foreach (var kv in _skillTreeLocationIds)
+                    if (kv.Value == locationId) { title = kv.Key; break; }
             if (title == null) return;
 
             string display;
@@ -369,11 +393,22 @@ namespace RubiniteAP
 
             _scoutedShopItems[title] = display;
             _scoutedShopFlags[title] = flags;
-            AddLog("Scouted: '" + title + "' -> '" + display + "'");
+            // TODO AddLog("Scouted: '" + title + "' -> '" + display + "'");
         }
 
         public bool TryGetScoutedShopItem(string talismanTitle, out string itemName)
             => _scoutedShopItems.TryGetValue(talismanTitle, out itemName);
+        
+        public bool TryGetScoutedSkillTreeItem(string treeDisplayId, out string itemName)
+        {
+            if (!GameData.SkillTitles.TryGetValue(treeDisplayId, out var title))
+            {
+                itemName = null;
+                return false;
+            }
+            var key = "Skill Tree: " + treeDisplayId.Replace('_', '-') + ": " + title;
+            return _scoutedShopItems.TryGetValue(key, out itemName);
+        }
 
         /// <summary>
         /// Returns the price the shop should charge for this slot.
@@ -395,13 +430,13 @@ namespace RubiniteAP
         public bool TryGetEffectiveSkillPrice(string treeId, out int price)
         {
             price = 0;
-            if (_skillPriceMode == "randomized"
-                && !string.IsNullOrEmpty(treeId)
-                && _effectiveSkillPrices.TryGetValue(treeId, out price))
-            {
-                return true;
-            }
-            return false;
+            if (_skillPriceMode != "randomized" || string.IsNullOrEmpty(treeId))
+                return false;
+
+            // slot_data keys use hyphens ("2-1"); SkillTreeData.DisplayName uses
+            // underscores ("2_1"). Normalize before lookup.
+            var normalized = treeId.Replace('_', '-');
+            return _effectiveSkillPrices.TryGetValue(normalized, out price);
         }
 
         public bool IsCrossGameShopItem(string talismanTitle)
@@ -520,6 +555,12 @@ namespace RubiniteAP
         private void OnItemsReceived(int index, List<NetworkItem> items)
         {
             var fullInventory = index == 0;
+            // Remember how many items were already present before we reset.
+            // On a full inventory replay (index=0), everything below this position
+            // was already processed in a previous session and its dust is already
+            // included in State.LastKnownDust.
+            var oldLastIndex = State.LastItemIndex;
+
             if (fullInventory)
             {
                 State.Items.Clear();
@@ -547,11 +588,35 @@ namespace RubiniteAP
                 State.AddItem(name);
                 added.Add(name);
 
-                if (_fillerDustValues.TryGetValue(name, out int dustValue)
-                    && GameSetting.Instance?.dustFlag != null)
+                if (name.StartsWith("Skill "))
+                    AddLog($"Skill item received: '{name}' (HasItem={State.HasItem(name)})");
+
+                // Only credit dust for items that are genuinely new since the last
+                // session. Items below oldLastIndex were already counted when they
+                // first arrived; re-adding them on full inventory replay would
+                // double-count (e.g. +1500 for every Large Crystal the player has).
+                bool isNewItem = !fullInventory || position >= oldLastIndex;
+
+                if (isNewItem && _fillerDustValues.TryGetValue(name, out int dustValue))
                 {
-                    int currentDust = GameSetting.Instance.dustFlag.GetValue();
-                    GameSetting.Instance.dustFlag.SetValue(currentDust + dustValue, "RubiniteAP");
+                    if (ApRunActive && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber
+                        && GameSetting.Instance?.dustFlag != null)
+                    {
+                        int currentDust = GameSetting.Instance.dustFlag.GetValue();
+                        GameSetting.Instance.dustFlag.SetValue(currentDust + dustValue, "RubiniteAP");
+                        State.LastKnownDust = currentDust + dustValue;
+                        AddLog($"Dust via item: +{dustValue} → {State.LastKnownDust} (in-run)");
+                        try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
+                        catch (Exception ex) { AddLog("Could not persist dust after item: " + ex.Message); }
+                    }
+                    else
+                    {
+                        // Not in an AP run — game's dust may belong to a different save.
+                        // Accumulate in State only; DoStartRun applies it when the run starts.
+                        State.LastKnownDust += dustValue;
+                        AddLog($"Dust via item: +{dustValue} → {State.LastKnownDust} (queued, not in run)");
+                    }
+                    State.Save();
                 }
             }
 
@@ -573,24 +638,27 @@ namespace RubiniteAP
 
         public void AddLog(string message)
         {
-            if (string.IsNullOrEmpty(message))
-                return;
+            if (string.IsNullOrEmpty(message)) return;
             _messageCount++;
-            
-            string formattedMessage = DateTime.Now.ToString("HH:mm:ss") + "  " + message;
-            LogLines.Add(formattedMessage);
-            
-            if (LogLines.Count > 200)
-                LogLines.RemoveRange(0, LogLines.Count - 200);
+            var formatted = DateTime.Now.ToString("HH:mm:ss") + "  " + message;
+            LogLines.Add(formatted);
+            if (LogLines.Count > 200) LogLines.RemoveRange(0, LogLines.Count - 200);
             LogChanged?.Invoke();
+            _logQueue.Enqueue(formatted);
+        }
 
+        private void FlushLogQueue()
+        {
+            if (_logQueue.IsEmpty) return;
+            var sb = new System.Text.StringBuilder();
+            while (_logQueue.TryDequeue(out var line))
+                sb.AppendLine(line);
             try
             {
-                // Save it to the BepInEx folder
-                string logPath = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RubiniteAP_Log.txt");
-                System.IO.File.AppendAllText(logPath, formattedMessage + Environment.NewLine);
+                var path = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RubiniteAP_Log.txt");
+                System.IO.File.AppendAllText(path, sb.ToString());
             }
-            catch { /* Ignore file errors */ }
+            catch { }
         }
 
         private void ShowItemToast(string name)
@@ -601,6 +669,8 @@ namespace RubiniteAP
 
         public void Tick()
         {
+            FlushLogQueue();
+
             if (_startingRun)
                 return;
 
@@ -961,7 +1031,7 @@ namespace RubiniteAP
                     AddLog($"Dust after DoStartRun LoadFlag: set to {target} from ApState");
                 }
 
-                ApplyToFlags(true, false);
+                ApplyToFlags(true);
                 DataSaver.SaveFlag(DataSaver.path_saveFolder);
 
                 ChallengeSave.EnterFromTitle();
@@ -1061,6 +1131,27 @@ namespace RubiniteAP
                    && State.HasItem(itemName);
         }
 
+        public bool IsSkillReceived(string treeDisplayId)
+        {
+            if (string.IsNullOrEmpty(treeDisplayId)) return false;
+            return _skillItemByTreeId.TryGetValue(treeDisplayId, out var itemName)
+                && State.HasItem(itemName);
+        }
+
+        /// <summary>
+        /// True if the AP location check for this skill has already been sent,
+        /// meaning the player has already paid the dust cost at least once.
+        /// Used to keep the skill frame visible ("known") after purchase even
+        /// if the item hasn't arrived yet, and to prevent double purchases.
+        /// </summary>
+        public bool IsSkillPurchased(string treeDisplayId)
+        {
+            if (string.IsNullOrEmpty(treeDisplayId)) return false;
+            if (!GameData.SkillTitles.TryGetValue(treeDisplayId, out var title)) return false;
+            var locName = "Skill Tree: " + treeDisplayId.Replace('_', '-') + ": " + title;
+            return _skillTreeLocationIds.TryGetValue(locName, out var locId) && State.HasChecked(locId);
+        }
+
         /// <summary>Write item ownership into game flags, without touching instantiated skills.</summary>
         private void ApplyToFlags(bool lockUnreceived)
         {
@@ -1135,29 +1226,40 @@ namespace RubiniteAP
                     if (tree.skillTreeDataDetail.isUnlocked != null
                         && tree.skillTreeDataDetail.isUnlocked.name == "GameFlagBool_True")
                         continue;
+
+                    bool received = IsReceivedSkill(tree);
+
                     if (GameData.IsFreeSkill(tree.DisplayName))
                     {
-                        SetSkillFlags(tree, true, false);
+                        SetSkillFlags(tree, true, true);
                         continue;
                     }
-                    SetSkillFlags(tree, IsReceivedSkill(tree), lockUnreceived);
+
+                    // Strictly vanilla: isUnlocked is only true if the player
+                    // actually received the skill item from AP.
+                    SetSkillFlags(tree, received, true);
                 }
             }
         }
 
-        private static void SetSkillFlags(SkillTreeData tree, bool unlocked, bool applyLock)
+        /// <summary>
+        /// Applies skill-tree visibility flags. isUnlocked governs whether the skill
+        /// is actually usable; isKnown governs whether the slot is visible at all.
+        /// Purchased-but-not-yet-received skills should be known=true, unlocked=false.
+        /// </summary>
+        private static void SetSkillFlags(SkillTreeData tree, bool unlocked, bool known)
         {
             var detail = tree.skillTreeDataDetail;
             if (detail?.isUnlocked != null)
                 detail.isUnlocked.SetValue(unlocked);
             if (detail?.isKnown != null)
-                detail.isKnown.SetValue(unlocked);
+                detail.isKnown.SetValue(known);
 
             var second = tree.secondRunSkillTreeDataDetail;
             if (second?.isUnlocked != null)
                 second.isUnlocked.SetValue(unlocked);
             if (second?.isKnown != null)
-                second.isKnown.SetValue(unlocked);
+                second.isKnown.SetValue(known);
         }
 
         /// <summary>Apply ownership at runtime, instantiating newly received skills.</summary>
@@ -1200,6 +1302,7 @@ namespace RubiniteAP
                     if (alreadyLive.Contains(tree.DisplayName))
                         continue;
 
+                    AddLog($"SetSkill: {tree.DisplayName} (received={IsReceivedSkill(tree)})");
                     try { core.SetSkill(tree); }
                     catch (Exception ex) { AddLog("Skill setup failed for " + tree.DisplayName + ": " + ex.Message); }
                 }
@@ -1312,8 +1415,8 @@ namespace RubiniteAP
         public void NotifyPodiumClick(string levelName)
         {
             if (string.IsNullOrEmpty(levelName)) return;
+            AddLog($"Podium click: '{levelName}' (wasPending='{_podiumClickPending}', lastLoaded='{_lastLoadedLevel}')");
             _podiumClickPending = levelName;
-            AddLog("Podium click: '" + levelName + "'");
         }
 
         public void ClearPendingPodiumClick()
@@ -1348,54 +1451,113 @@ namespace RubiniteAP
             return true;
         }
 
+        public bool TryGetMappedLevel(string portalLevel, out string mappedLevel)
+        {
+            if (_bossSceneMap.TryGetValue(portalLevel, out mappedLevel))
+                return !string.IsNullOrEmpty(mappedLevel);
+            mappedLevel = portalLevel;
+            return false;
+        }
+
         public void RefreshPortals()
         {
             if (!ApRunActive || DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
                 return;
 
+            if (_bossSceneMap.Count == 0)
+            {
+                AddLog("WARNING: RefreshPortals called with empty _bossSceneMap. "
+                    + "Seed may be an old version without 'boss_scene_map'. No shuffle will be applied.");
+            }
+
+            bool loggedAnyMapping = false;
             var points = Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>();
             foreach (var point in points)
             {
                 if (point == null || point.gameObject == null || !point.gameObject.scene.IsValid())
                     continue;
-                var level = point.levelName != null ? point.levelName.displayName : null;
-                if (string.IsNullOrEmpty(level))
+                var portalLevel = point.levelName != null ? point.levelName.displayName : null;
+                if (string.IsNullOrEmpty(portalLevel))
                     continue;
 
-                var iconSprite = FindBossIconInPoint(point);
-                if (iconSprite != null)
-                    _bossSteleByLevel[level] = iconSprite;
+                string displayLevel = portalLevel;
+                if (_bossSceneMap.TryGetValue(portalLevel, out var mapped) && !string.IsNullOrEmpty(mapped))
+                    displayLevel = mapped;
 
-                var boss = GameData.FindByLevel(level);
-                if (boss == null)
-                    continue;
-                var unlocked = IsBossUnlocked(boss, level);
-
-                if (point.dialogueItem != null)
-                    point.dialogueItem.gameObject.SetActive(unlocked);
-                if (point.unlock_Part != null)
-                    point.unlock_Part.SetActive(unlocked);
-                if (point.lock_Part != null)
-                    point.lock_Part.SetActive(!unlocked);
-                if (!unlocked && point.onEnableLoadLevel != null
-                    && point.onEnableLoadLevel.gameObject.activeSelf)
+                // Log once so we can verify in the log whether mapping fired at all.
+                if (displayLevel != portalLevel && !loggedAnyMapping)
                 {
-                    point.onEnableLoadLevel.gameObject.SetActive(false);
+                    //AddLog($"RefreshPortals: mapping '{portalLevel}' -> '{displayLevel}'");
+                    loggedAnyMapping = true;
+                }
+
+                // 1. Visuals from the MAPPED level data.
+                var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+
+                LevelData mappedData = overview?.FindUniqueId(displayLevel);
+                if (mappedData == null)
+                {
+                    // Fallback: match by DisplayName explicitly
+                    foreach (var ld in overview.GetAllData())
+                    {
+                        if (ld != null && ld.DisplayName == displayLevel) { mappedData = ld; break; }
+                    }
+                }
+
+                if (mappedData == null)
+                {
+                    AddLog($"RefreshPortals: FAIL - no LevelData for '{displayLevel}'");
+                    continue;
+                }
+
+                if (point.bossIcon == null)
+                {
+                    AddLog($"RefreshPortals: FAIL - '{portalLevel}' has null bossIcon");
+                    continue;
+                }
+
+                var iconSprite = mappedData.bossIcon_ForChallengeArea ?? mappedData.bossIcon;
+                if (iconSprite == null)
+                {
+                    AddLog($"RefreshPortals: FAIL - '{displayLevel}' has no bossIcon_ForChallengeArea/bossIcon");
+                    continue;
+                }
+
+                string prevName = point.bossIcon.sprite != null ? point.bossIcon.sprite.name : "null";
+                point.bossIcon.sprite = iconSprite;
+                //AddLog($"RefreshPortals: '{portalLevel}' icon: '{prevName}' -> '{iconSprite.name}'");
+
+                if (point.bossStageImage != null)
+                {
+                    if (mappedData.differentImageForChallengeArea && mappedData.ScenePic_ForChallengeArea != null)
+                        point.bossStageImage.sprite = mappedData.ScenePic_ForChallengeArea;
+                    else if (mappedData.MapSelect_ScenePic != null)
+                        point.bossStageImage.sprite = mappedData.MapSelect_ScenePic;
+                }
+
+                if (point.dustText != null)
+                    point.dustText.text = (mappedData.dustFinalStage + mappedData.dustFirstStage).ToString();
+
+                // 2. Lock state from the PORTAL'S own boss requirement.
+                //    ShouldBlockLoad uses portalLevel, so this must match it.
+                var portalBoss = GameData.FindByLevel(portalLevel);
+                if (portalBoss != null)
+                {
+                    var unlocked = IsBossUnlocked(portalBoss, portalLevel);
+
+                    if (point.dialogueItem != null)
+                        point.dialogueItem.gameObject.SetActive(unlocked);
+                    if (point.unlock_Part != null)
+                        point.unlock_Part.SetActive(unlocked);
+                    if (point.lock_Part != null)
+                        point.lock_Part.SetActive(!unlocked);
+                    if (!unlocked && point.onEnableLoadLevel != null
+                        && point.onEnableLoadLevel.gameObject.activeSelf)
+                    {
+                        point.onEnableLoadLevel.gameObject.SetActive(false);
+                    }
                 }
             }
-        }
-
-        private static Sprite FindBossIconInPoint(ChallengeLevelPoint point)
-        {
-            if (point == null) return null;
-            foreach (var sr in point.GetComponentsInChildren<SpriteRenderer>(true))
-            {
-                if (sr == null || sr.sprite == null) continue;
-                if (!sr.sprite.name.StartsWith("BossStele_")) continue;
-                if (sr.sprite.name == "BossStele_0") continue;   // 70×66 Stele, kein Icon
-                return sr.sprite;
-            }
-            return null;
         }
 
         private Sprite FindBossSteleSprite(string bossKey)
@@ -1404,6 +1566,22 @@ namespace RubiniteAP
             if (string.IsNullOrEmpty(level)) return null;
             return _bossSteleByLevel.TryGetValue(level, out var sprite) ? sprite : null;
         }
+
+        private static SpriteRenderer FindBossSteleRendererInPoint(ChallengeLevelPoint point)
+        {
+            if (point == null) return null;
+            foreach (var sr in point.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr == null || sr.sprite == null) continue;
+                if (!sr.sprite.name.StartsWith("BossStele_")) continue;
+                if (sr.sprite.name == "BossStele_0") continue;
+                return sr;
+            }
+            return null;
+        }
+
+        private static Sprite FindBossIconInPoint(ChallengeLevelPoint point)
+            => FindBossSteleRendererInPoint(point)?.sprite;
 
         private static string SigilToBossKey(string sigilItemName)
         {
@@ -1473,25 +1651,25 @@ namespace RubiniteAP
                 case "2_1": return "SkillsTreeIcon_2";
                 case "2_2": return "SkillsTreeIcon_17";
                 case "2_3": return "SkillsTreeIcon_9";
-                case "2_4": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "2_4": return "SkillsTreeIcon_5";
                 case "2_5": return "SkillsTreeIcon_19";
                 case "2_6": return "SkillsTreeIcon_16";
-                case "2_7": return "SkillsTreeIcon_5";   // Enhanced Heal (placeholder)
+                case "2_7": return "SkillsTreeIcon_5";
 
                 case "3_1": return "SkillsTreeIcon_3";
                 case "3_2": return "SkillsTreeIcon_21";
-                case "3_3": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "3_3": return "SkillsTreeIcon_5";
                 case "3_4": return "SkillsTreeIcon_16";
-                case "3_5": return "SkillsTreeIcon_5";   // Enhanced Heal (placeholder)
+                case "3_5": return "SkillsTreeIcon_5";
                 case "3_6": return "SkillsTreeIcon_15";
                 case "3_7": return "SkillsTreeIcon_8";
 
-                case "4_1": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "4_1": return "SkillsTreeIcon_5";
                 case "4_2": return "SkillsTreeIcon_22";
-                case "4_3": return "SkillsTreeIcon_5";   // Enhanced Heal (placeholder)
+                case "4_3": return "SkillsTreeIcon_5";
                 case "4_4": return "SkillsTreeIcon_20";
                 case "4_5": return "SkillsTreeIcon_24";
-                case "4_6": return "SkillsTreeIcon_5";   // Pureblood Heart (placeholder)
+                case "4_6": return "SkillsTreeIcon_5";
 
                 default: return null;
             }
@@ -1518,7 +1696,7 @@ namespace RubiniteAP
             var noTalisman = talismans == 0;
             var flawless = noHit && noTalisman;
             
-                        var rankAchieved = false;
+            var rankAchieved = false;
             if (manager.levelTimer != null && manager.levelData.gradingScale != null && manager.levelData.gradingScale.Length > 0)
             {
                 if (_requiredRankIndex >= manager.levelData.gradingScale.Length)
@@ -1599,18 +1777,23 @@ namespace RubiniteAP
 
         public static string GetTargetLevel(OnEnableLoadLevel component)
         {
-            if (component == null)
-                return null;
-            try
+            if (component == null) return null;
+
+            if (!_getLevelNameMethodSearched)
             {
-                var method = typeof(OnEnableLoadLevel).GetMethod(
-                    "GetLevelName", BindingFlags.Instance | BindingFlags.NonPublic);
-                if (method != null)
-                    return (string)method.Invoke(component, null);
+                _getLevelNameMethodSearched = true;
+                try
+                {
+                    _getLevelNameMethod = typeof(OnEnableLoadLevel).GetMethod(
+                        "GetLevelName", BindingFlags.Instance | BindingFlags.NonPublic);
+                }
+                catch { }
             }
-            catch
+
+            if (_getLevelNameMethod != null)
             {
-                // fall through to the public field
+                try { return (string)_getLevelNameMethod.Invoke(component, null); }
+                catch { }
             }
             return component.levelName != null ? component.levelName.displayName : null;
         }
@@ -1775,32 +1958,63 @@ namespace RubiniteAP
             }
         }
 
-        public void HandleSkillTreePurchase(string treeId, string title)
+        public bool HandleSkillTreePurchase(string treeId, string title, int price)
         {
-            if (!ApRunActive) return;
+            if (!ApRunActive) return false;
 
-            var locName = "Skill Tree: " + treeId + ": " + title;
+            var normalizedId = treeId.Replace('_', '-');
+            var locName = "Skill Tree: " + normalizedId + ": " + title;
+
             if (!_skillTreeLocationIds.TryGetValue(locName, out var locId))
             {
                 AddLog("WARNING: No skill tree location for '" + locName + "'");
-                return;
+                return false;
+            }
+
+            if (State.HasChecked(locId))
+            {
+                AddLog("Skill tree check already checked: '" + locName + "' (no dust deducted)");
+                return true;
+            }
+
+            var core = GetGamePlayCore();
+            int dustBefore = -1;
+            if (core?.dust != null && price > 0)
+            {
+                dustBefore = core.dust.GetValue();
+                core.dust.SetValue(dustBefore - price, "RubiniteAP SkillTreePurchase");
+                AddLog($"Skill tree cost: -{price} ({dustBefore} -> {core.dust.GetValue()})");
+            }
+
+            if (core?.dust != null && GameSetting.Instance?.dustFlag != null
+                && core.dust != GameSetting.Instance.dustFlag)
+            {
+                AddLog($"WARNING: core.dust != GameSetting.dustFlag (core={core.dust.GetValue()}, setting={GameSetting.Instance.dustFlag.GetValue()}). Syncing to core.");
+                GameSetting.Instance.dustFlag.SetValue(core.dust.GetValue(), "RubiniteAP");
             }
 
             AddLog("Skill tree purchase: '" + locName + "'");
 
-            if (!State.HasChecked(locId))
+            var ids = new List<long> { locId };
+            State.AddChecked(ids);
+            State.Save();
+            if (Client.IsConnected)
+                Client.SendLocationChecks(ids);
+            AddLog("Skill tree check sent: '" + locName + "' (ID: " + locId + ")");
+
+            if (GameSetting.Instance?.dustFlag != null)
+                State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
+            State.Save();
+
+            if (DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
             {
-                var ids = new List<long> { locId };
-                State.AddChecked(ids);
-                State.Save();
-                if (Client.IsConnected)
-                    Client.SendLocationChecks(ids);
-                AddLog("Skill tree check sent: '" + locName + "' (ID: " + locId + ")");
+                try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
+                catch (Exception ex) { AddLog("Could not persist skill flags: " + ex.Message); }
             }
-            else
-            {
-                AddLog("Skill tree check already checked: '" + locName + "'");
-            }
+
+            ApplyRuntime(true);
+
+            return true;
         }
 
         public Sprite LoadCustomSprite(string fileName, float targetHeight = 0f, Texture2D shapeTex = null, float forcedPpu = 0f)
