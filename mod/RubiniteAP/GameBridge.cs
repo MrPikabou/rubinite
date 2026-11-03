@@ -67,13 +67,17 @@ namespace RubiniteAP
         private bool _dustResetThisRun;
         private string _playerColorKey = "default";
 
-        private bool _deathLinkEnabled;
+        private bool _seedHasDeathLink;
         private int _deathLinkAmnesty;
         private int _deathsSinceLastSend;
         private int _lastKnownPlayerHp = -1;
         private bool _playerDeathFired;
-        private System.Reflection.FieldInfo _playerHpField;
         private System.Reflection.MethodInfo _playerKillMethod;
+
+        private bool DeathLinkActive =>
+            ApRunActive &&
+            _seedHasDeathLink &&
+            (RubiniteAPPlugin.Instance?.Settings?.DeathLinkEnabled?.Value ?? false);
 
         public event Action LogChanged;
 
@@ -300,18 +304,16 @@ namespace RubiniteAP
             State.AddChecked(info.CheckedLocations);
             State.Save();
 
-            var seedHasDeathLink = info.SlotData?["death_link"]?.Value<bool>() ?? false;
-            _deathLinkAmnesty = info.SlotData?["death_link_amnesty"]?.Value<int>() ?? 3;
-            _deathLinkEnabled = seedHasDeathLink && RubiniteAPPlugin.Instance.Settings.DeathLinkEnabled.Value;
             _deathsSinceLastSend = 0;
             _lastKnownPlayerHp = -1;
             _playerDeathFired = false;
-            _playerHpField = null;
             _playerKillMethod = null;
+            _seedHasDeathLink = info.SlotData?["death_link"]?.Value<bool>() ?? false;
+            _deathLinkAmnesty = info.SlotData?["death_link_amnesty"]?.Value<int>() ?? 3;
 
-            if (_deathLinkEnabled)
+            if (_seedHasDeathLink && RubiniteAPPlugin.Instance.Settings.DeathLinkEnabled.Value)
                 AddLog("DeathLink enabled (amnesty=" + _deathLinkAmnesty + ").");
-            else if (seedHasDeathLink)
+            else if (_seedHasDeathLink)
                 AddLog("DeathLink: seed has it, but client setting is off.");
 
             StatusMessage = "Connected as " + slot + (string.IsNullOrEmpty(info.SeedName) ? "" : " (" + info.SeedName + ")");
@@ -604,7 +606,7 @@ namespace RubiniteAP
 
             var sceneName = SceneManager.GetActiveScene().name;
             
-            if (ApRunActive && _deathLinkEnabled && sceneName != "TitleMenu")
+            if (ApRunActive && DeathLinkActive && sceneName != "TitleMenu")
                 PollPlayerHpForDeathLink();
 
             bool wasActive = ApRunActive;
@@ -698,7 +700,7 @@ namespace RubiniteAP
             {
                 AddLog("=== SCANNING UI ASSETS ===");
 
-                // (a) Bestehender Scan — bleibt
+                // (a) Normal Scan
                 var sprites = Resources.FindObjectsOfTypeAll<SpriteRenderer>();
                 foreach (var sr in sprites)
                 {
@@ -723,7 +725,7 @@ namespace RubiniteAP
                     AddLog($"TMP: GameObject='{tmp.gameObject.name}', Text='{tmp.text}'");
                 }
 
-                // (b) NEU: alle BossStele_* Sprites (auch die gerade nicht gerenderten)
+                // (b) Searches for all BossStele_* sprites
                 AddLog("--- BossStele sprites ---");
                 var seenBoss = new HashSet<string>();
                 foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
@@ -733,7 +735,7 @@ namespace RubiniteAP
                         AddLog($"SPRITE: '{s.name}' ({s.rect.width}x{s.rect.height})");
                 }
 
-                // (c) NEU: UI_Crystal_* (Blood-Dust-Icons)
+                // (c) UI_Crystal_* (Blood-Dust-Icons)
                 AddLog("--- UI_Crystal sprites ---");
                 var seenCrystal = new HashSet<string>();
                 foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
@@ -2207,7 +2209,10 @@ namespace RubiniteAP
 
         private void OnDeathLinkReceived(string source, string cause)
         {
-            if (!ApRunActive || !_deathLinkEnabled) return;
+            if (!ApRunActive || !DeathLinkActive) return;
+            var sceneName = SceneManager.GetActiveScene().name;
+            if (sceneName == "TitleMenu" || sceneName == ChallengeAreaScene) return;
+
             AddLog("DeathLink from " + source + ": " + cause);
 
             var core = GetGamePlayCore();
@@ -2231,61 +2236,27 @@ namespace RubiniteAP
             var core = GetGamePlayCore();
             if (core?.player == null) return;
 
-            if (_playerHpField == null)
-            {
-                var t = core.player.GetType();
-                foreach (var name in new[] {
-                    "currentHp", "currentHP", "hp", "HP", "health", "Health",
-                    "currentHealth", "curHp", "CurHp", "hitPoint", "hitPoints" })
-                {
-                    var f = t.GetField(name,
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (f != null && (f.FieldType == typeof(int) || f.FieldType == typeof(float)))
-                    {
-                        _playerHpField = f;
-                        AddLog("DeathLink: HP field detected as '" + name + "'.");
-                        break;
-                    }
-                }
-                if (_playerHpField == null)
-                {
-                    AddLog("DeathLink: no HP field on player; outgoing disabled.");
-                    return;
-                }
-            }
-
-            int hp;
+            bool isDead;
             try
             {
-                var raw = _playerHpField.GetValue(core.player);
-                hp = raw is int i ? i : (raw is float f ? (int)f : -1);
+                // PlayerCore.state ist ein öffentliches Feld vom Typ PlayerCore.State
+                var stateField = core.player.GetType().GetField("state",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (stateField == null) return;
+                var stateVal = stateField.GetValue(core.player);
+                isDead = stateVal != null && stateVal.ToString() == "Dead";
             }
             catch { return; }
 
-            if (hp > 0 && _lastKnownPlayerHp <= 0)
-                _playerDeathFired = false;           // respawn
-            else if (hp <= 0 && _lastKnownPlayerHp > 0 && !_playerDeathFired)
+            if (!isDead && _lastKnownPlayerHp <= 0)
+                _playerDeathFired = false;
+            else if (isDead && _lastKnownPlayerHp > 0 && !_playerDeathFired)
             {
                 OnLocalPlayerDied();
                 _playerDeathFired = true;
             }
 
-            _lastKnownPlayerHp = hp;
-        }
-
-        private void OnLocalPlayerDied()
-        {
-            _deathsSinceLastSend++;
-            if (_deathsSinceLastSend > _deathLinkAmnesty)
-            {
-                Client.SendDeathLink("died in " + SceneManager.GetActiveScene().name);
-                AddLog("DeathLink sent (" + _deathsSinceLastSend + " deaths).");
-                _deathsSinceLastSend = 0;
-            }
-            else
-            {
-                AddLog("Death forgiven (" + _deathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
-            }
+            _lastKnownPlayerHp = isDead ? 0 : 1;
         }
 
         private bool TryKillLocalPlayer(object player)
@@ -2295,9 +2266,7 @@ namespace RubiniteAP
 
             if (_playerKillMethod == null)
             {
-                foreach (var name in new[] {
-                    "Die", "Kill", "KillPlayer", "KillSelf", "OnDeath",
-                    "DieNow", "ForceDeath", "TakeFatalDamage" })
+                foreach (var name in new[] { "Dead", "DeadByPoison", "FakeDead" })
                 {
                     var m = type.GetMethod(name,
                         BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
@@ -2311,35 +2280,22 @@ namespace RubiniteAP
                 try { _playerKillMethod.Invoke(player, null); return true; }
                 catch (Exception ex) { AddLog("Kill method failed: " + ex.Message); }
             }
-
-            if (_playerHpField == null)
-            {
-                foreach (var name in new[] {
-                    "currentHp", "currentHP", "hp", "HP", "health", "Health",
-                    "currentHealth", "curHp", "CurHp", "hitPoint", "hitPoints" })
-                {
-                    var f = type.GetField(name,
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (f != null && (f.FieldType == typeof(int) || f.FieldType == typeof(float)))
-                    {
-                        _playerHpField = f;
-                        break;
-                    }
-                }
-            }
-
-            if (_playerHpField != null)
-            {
-                try
-                {
-                    object zero = _playerHpField.FieldType == typeof(int) ? (object)0 : 0f;
-                    _playerHpField.SetValue(player, zero);
-                    return true;
-                }
-                catch (Exception ex) { AddLog("HP zero-set failed: " + ex.Message); }
-            }
-
             return false;
+        }
+
+        private void OnLocalPlayerDied()
+        {
+            _deathsSinceLastSend++;
+            if (DeathLinkActive && _deathsSinceLastSend > _deathLinkAmnesty)
+            {
+                Client.SendDeathLink("died in " + SceneManager.GetActiveScene().name);
+                AddLog("DeathLink sent (" + _deathsSinceLastSend + " deaths).");
+                _deathsSinceLastSend = 0;
+            }
+            else
+            {
+                AddLog("Death forgiven (" + _deathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
+            }
         }
     }
 

@@ -72,6 +72,9 @@ namespace RubiniteAP
         public event Action<string, string> DeathLinkReceived;
         public event Action DataPackageReady;
 
+        private bool DeathLinkCurrentlyEnabled =>
+            RubiniteAPPlugin.Instance?.Settings?.DeathLinkEnabled?.Value ?? false;
+
         public void LogLine(string message)
         {
             // Network threads must never touch Unity state or the log list directly.
@@ -101,6 +104,7 @@ namespace RubiniteAP
             _pendingScoutLocations = null;
             _itemNamesByGame.Clear();
             _gameBySlot.Clear();
+            _deathLinkEnabled = RubiniteAPPlugin.Instance.Settings.DeathLinkEnabled.Value;
             var token = _cts.Token;
 
             _receiveTask = Task.Run(async () =>
@@ -572,6 +576,12 @@ namespace RubiniteAP
                 LogLine("DataPackage: 'data' field missing.");
                 return;
             }
+            if (dataToken is JObject dataObj)
+            {
+                var keys = new List<string>();
+                foreach (var p in dataObj.Properties()) keys.Add(p.Name);
+                LogLine("DataPackage data keys: " + string.Join(", ", keys));
+            }
 
             var games = dataToken["games"] as JObject;
             if (games == null)
@@ -654,7 +664,7 @@ namespace RubiniteAP
 
         public void SendDeathLink(string cause)
         {
-            if (!_connected || !_deathLinkEnabled) return;
+            if (!_connected || !DeathLinkCurrentlyEnabled) return;
             var data = new JObject
             {
                 ["time"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
@@ -671,7 +681,7 @@ namespace RubiniteAP
 
         private void HandleBounced(JObject packet)
         {
-            if (!_deathLinkEnabled) return;
+            if (!DeathLinkCurrentlyEnabled) return;
             if (!(packet["tags"] is JArray tags)) return;
 
             bool isDeathLink = false;

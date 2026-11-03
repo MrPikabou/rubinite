@@ -46,11 +46,23 @@ namespace RubiniteAP
             GUILayout.Label("Password (optional)");
             _settings.Password.Value = GUILayout.PasswordField(_settings.Password.Value ?? "", '*', GUILayout.Height(22f));
 
+            GUILayout.Space(4f);
+            var newDeathLink = GUILayout.Toggle(
+                _settings.DeathLinkEnabled.Value,
+                "Enable DeathLink (only takes effect if seed also allows it)");
+            if (newDeathLink != _settings.DeathLinkEnabled.Value)
+            {
+                _settings.DeathLinkEnabled.Value = newDeathLink;
+                _client.SetDeathLinkEnabled(newDeathLink);
+                SaveSettings();
+            }
+
             GUILayout.BeginHorizontal();
             GUI.enabled = !_client.IsConnected;
             if (GUILayout.Button("Connect", GUILayout.Height(26f)))
             {
                 SaveSettings();
+                _client.SetDeathLinkEnabled(_settings.DeathLinkEnabled.Value);
                 _client.Connect(_settings.Server.Value, _settings.Port.Value, _settings.Slot.Value,
                     _settings.Password.Value, _bridge.State.Uuid);
             }
