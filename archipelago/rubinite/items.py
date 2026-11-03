@@ -91,7 +91,9 @@ def create_all_items(world: RubiniteWorld) -> None:
         itempool.append(world.create_item(data.talisman_item_name(title)))
 
     if world.options.progressive_shop.value:
-        for _ in range(data.SHOP_GROUPS):
+        starting = world.options.starting_shop_groups.value
+        expansions_needed = max(0, data.SHOP_GROUPS - starting)
+        for _ in range(expansions_needed):
             itempool.append(world.create_item(data.SHOP_EXPANSION_ITEM))
 
     unfilled_locations = len(world.multiworld.get_unfilled_locations(world.player))

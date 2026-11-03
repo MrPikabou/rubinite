@@ -427,4 +427,72 @@ namespace RubiniteAP
                 CreateTalismanClickPricePatch.TrySetCostDust(__instance.talismanData, __state);
         }
     }
+
+    [HarmonyPatch(typeof(SkillTreeFrame), "Unlock")]
+    internal static class SkillTreeUnlockPatch
+    {
+        private static bool Prefix(SkillTreeFrame __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return true;
+
+            var data = __instance.skillTreeData;
+            if (data == null) return true;
+            var treeId = data.DisplayName;
+            if (string.IsNullOrEmpty(treeId)) return true;
+            if (!GameData.SkillTitles.TryGetValue(treeId, out var title)) return true;
+
+            // Send the AP location check — grants an item from the pool, which
+            // may or may not be this skill.
+            bridge.HandleSkillTreePurchase(treeId, title);
+
+            // Manually mirror everything Unlock() does EXCEPT SetSkill and
+            // isUnlocked = true. The skill stays locked until the AP item arrives.
+            var core = GamePlayCore.Instance;
+            if (core != null && core.dust != null)
+            {
+                int price = data.cost;
+                if (bridge.TryGetEffectiveSkillPrice(treeId, out var effective))
+                    price = effective;
+                core.dust.SetValue(core.dust.GetValue() - price, "RubiniteAP SkillTreePurchase");
+            }
+
+            // Ensure the skill is visible in the tree (Vanilla does this in OnEnable
+            // for unknown skills; we mark it known so the player can see it after
+            // a purchase even if it stays locked).
+            data.skillTreeDataDetail.isKnown?.SetValue(true);
+
+            // Play the unlock animation as visual feedback
+            try
+            {
+                __instance.purchasableFrame?.SetActive(false);
+                __instance.animatorController?.ChangeAnimation(
+                    SkillTreeFrame.SkillTreeFrameAnimationType.LockToUnlock);
+            }
+            catch { }
+
+            // Do NOT call SetSkill(...)
+            // Do NOT call isUnlocked.SetValue(true)
+            // Return false so vanilla Unlock() is skipped
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(SkillTreeFrame), "Init")]
+    internal static class SkillTreeInitCostPatch
+    {
+        private static void Postfix(SkillTreeFrame __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var data = __instance.skillTreeData;
+            if (data == null) return;
+            if (!bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var price)) return;
+            if (price == data.cost) return;
+
+            __instance.costText?.SetText(price.ToString());
+            __instance.costText2?.SetText(price.ToString());
+        }
+    }
 }

@@ -36,8 +36,10 @@ namespace RubiniteAP
         private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _effectiveShopPrices = new Dictionary<string, int>();
+        private readonly Dictionary<string, int> _effectiveSkillPrices = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _scoutedShopItems = new Dictionary<string, string>();
         private readonly Dictionary<string, int> _scoutedShopFlags = new Dictionary<string, int>();
+        private readonly Dictionary<string, long> _skillTreeLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _fillerDustValues = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _fillerIconNames = new Dictionary<string, string>();
 
@@ -59,6 +61,8 @@ namespace RubiniteAP
 
         private string _shopPriceMode = "vanilla";
         private bool _shopProgressionEnabled;
+        private int _startingShopGroups;
+        private string _skillPriceMode = "vanilla";
 
         private string _playerColorKey = "default";
 
@@ -138,6 +142,17 @@ namespace RubiniteAP
                 AddLog("Requested scouts for " + _shopLocationIds.Count + " shop slots.");
             }
 
+            _skillTreeLocationIds.Clear();
+            if (info.SlotData?["skill_tree_locations"] is JObject stLoc)
+            {
+                foreach (var prop in stLoc.Properties())
+                {
+                    if (long.TryParse(prop.Value.ToString(), out var id))
+                        _skillTreeLocationIds[prop.Name] = id;
+                }
+                AddLog("Skill tree locations loaded (" + _skillTreeLocationIds.Count + " entries).");
+            }
+
             _shopPriceMode = info.SlotData?["shop_price_mode"]?.ToString() ?? "vanilla";
             _effectiveShopPrices.Clear();
             if (info.SlotData?["shop_prices"] is JObject shopPrices)
@@ -150,6 +165,21 @@ namespace RubiniteAP
                 if (_effectiveShopPrices.Count > 0)
                     AddLog("Shop prices loaded (" + _effectiveShopPrices.Count + " entries, mode=" + _shopPriceMode + ").");
             }
+
+            _skillPriceMode = info.SlotData?["skill_price_mode"]?.ToString() ?? "vanilla";
+            _effectiveSkillPrices.Clear();
+            if (info.SlotData?["skill_prices"] is JObject skillPrices)
+            {
+                foreach (var prop in skillPrices.Properties())
+                {
+                    if (int.TryParse(prop.Value.ToString(), out var price))
+                        _effectiveSkillPrices[prop.Name] = price;
+                }
+                if (_effectiveSkillPrices.Count > 0)
+                    AddLog("Skill prices loaded (" + _effectiveSkillPrices.Count + " entries, mode=" + _skillPriceMode + ").");
+            }
+
+            _startingShopGroups = info.SlotData?["starting_shop_groups"]?.Value<int>() ?? 0;
 
             _fillerDustValues.Clear();
             _fillerIconNames.Clear();
@@ -331,6 +361,18 @@ namespace RubiniteAP
             return talismanData.costDust;
         }
 
+        public bool TryGetEffectiveSkillPrice(string treeId, out int price)
+        {
+            price = 0;
+            if (_skillPriceMode == "randomized"
+                && !string.IsNullOrEmpty(treeId)
+                && _effectiveSkillPrices.TryGetValue(treeId, out price))
+            {
+                return true;
+            }
+            return false;
+        }
+
         public bool IsCrossGameShopItem(string talismanTitle)
             => _crossGameScoutedTitles.Contains(talismanTitle);
 
@@ -440,7 +482,8 @@ namespace RubiniteAP
             foreach (var item in State.Items)
                 if (item == "Shop Expansion") expansions++;
 
-            return expansions > groupIndex;
+            // Free groups = starting groups + received expansions
+            return groupIndex < (_startingShopGroups + expansions);
         }
 
         private void OnItemsReceived(int index, List<NetworkItem> items)
@@ -749,6 +792,21 @@ namespace RubiniteAP
                     if (seenMap.Add(key + "|" + path))
                     {
                         AddLog($"SKILLMAP: '{path}' = '{img.sprite.name}'");
+                    }
+                }
+
+                AddLog("--- Skill Flags Live State ---");
+                var sko = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+                if (sko != null)
+                {
+                    foreach (var t in sko.GetAllData())
+                    {
+                        if (t == null || t.skillTreeDataDetail == null) continue;
+                        var u = t.skillTreeDataDetail.isUnlocked?.GetValue() ?? false;
+                        var k = t.skillTreeDataDetail.isKnown?.GetValue() ?? false;
+                        var u2 = t.secondRunSkillTreeDataDetail?.isUnlocked?.GetValue() ?? false;
+                        var k2 = t.secondRunSkillTreeDataDetail?.isKnown?.GetValue() ?? false;
+                        AddLog($"SKILLFLAG: {t.DisplayName} u1={u} k1={k} u2={u2} k2={k2}");
                     }
                 }
 
@@ -1580,6 +1638,34 @@ namespace RubiniteAP
 
             // Re-lock the talisman so it disappears from the shop
             ApplyRuntime(true);
+        }
+
+        public void HandleSkillTreePurchase(string treeId, string title)
+        {
+            if (!ApRunActive) return;
+
+            var locName = "Skill Tree: " + treeId + ": " + title;
+            if (!_skillTreeLocationIds.TryGetValue(locName, out var locId))
+            {
+                AddLog("WARNING: No skill tree location for '" + locName + "'");
+                return;
+            }
+
+            AddLog("Skill tree purchase: '" + locName + "'");
+
+            if (!State.HasChecked(locId))
+            {
+                var ids = new List<long> { locId };
+                State.AddChecked(ids);
+                State.Save();
+                if (Client.IsConnected)
+                    Client.SendLocationChecks(ids);
+                AddLog("Skill tree check sent: '" + locName + "' (ID: " + locId + ")");
+            }
+            else
+            {
+                AddLog("Skill tree check already checked: '" + locName + "'");
+            }
         }
 
         public Sprite LoadCustomSprite(string fileName, float targetHeight = 0f, Texture2D shapeTex = null, float forcedPpu = 0f)

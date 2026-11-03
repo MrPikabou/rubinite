@@ -80,8 +80,15 @@ class RubiniteWorld(World):
             "shop_locations": shop_location_ids,
             "shop_groups": self._shop_groups,
             "progressive_shop": self.options.progressive_shop.value,
+            "starting_shop_groups": self.options.starting_shop_groups.value,
             "shop_price_mode": self.options.shop_price_mode.current_key,
             "shop_prices": self._shop_prices,
+            "skill_tree_locations": {
+                data.skill_tree_location_name(tree_id, title):
+                    locations.LOCATION_NAME_TO_ID[data.skill_tree_location_name(tree_id, title)]
+                for tree_id, title in data.SKILLS
+            },
+            "skill_prices": self._skill_prices,
             "filler_items": [
                 {"name": name, "dust": dust, "icon": icon}
                 for name, _id, _w, dust, icon in data.FILLER_ITEMS
@@ -94,6 +101,7 @@ class RubiniteWorld(World):
         self._starting_boss_keys = self._compute_starting_bosses()
         self._shop_groups = self._compute_shop_groups()
         self._shop_prices = self._compute_shop_prices()
+        self._skill_prices = self._compute_skill_prices() 
         self._validate_item_location_balance()
 
     def _validate_item_location_balance(self) -> None:
@@ -107,7 +115,8 @@ class RubiniteWorld(World):
         enabled_checks = self.get_enabled_check_types()
         boss_locations = len(data.BOSSES) * len(enabled_checks)
         shop_locations = len(data.TALISMANS)
-        total_locations = boss_locations + shop_locations
+        skill_tree_locations = len(data.SKILLS)
+        total_locations = boss_locations + shop_locations + skill_tree_locations
 
         sigil_items = sum(
             1 for boss in data.BOSSES
@@ -129,6 +138,9 @@ class RubiniteWorld(World):
             return []
         talisman_ids = [tid for _title, tid in data.TALISMANS]
         self.random.shuffle(talisman_ids)
+        # Shuffle talismans into SHOP_GROUPS groups; the first N groups are
+        # unlocked from the start (starting_shop_groups), so we only put
+        # SHOP_GROUPS - N expansion items into the pool.
         return [
             talisman_ids[i * data.SHOP_SLOTS_PER_GROUP:(i + 1) * data.SHOP_SLOTS_PER_GROUP]
             for i in range(data.SHOP_GROUPS)
@@ -144,6 +156,17 @@ class RubiniteWorld(World):
         return {
             talisman_id: self.random.randint(min_price, max_price)
             for _title, talisman_id in data.TALISMANS
+        }
+
+    def _compute_skill_prices(self) -> dict[str, int]:
+        if self.options.skill_price_mode.value != self.options.skill_price_mode.option_randomized:
+            return {}
+        min_p = self.options.skill_price_min.value
+        max_p = self.options.skill_price_max.value
+        if min_p > max_p: min_p, max_p = max_p, min_p
+        return {
+            tree_id: self.random.randint(min_p, max_p)
+            for tree_id, _title in data.SKILLS
         }
     
     def _compute_starting_bosses(self) -> set[str]:

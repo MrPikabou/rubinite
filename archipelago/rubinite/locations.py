@@ -22,6 +22,11 @@ def _build_locations() -> dict[str, int]:
             
     for shop_index, (title, _) in enumerate(data.TALISMANS):
         mapping[data.shop_location_name(title)] = data.SHOP_LOCATION_BASE + shop_index
+
+    for skill_index, (tree_id, title) in enumerate(data.SKILLS):
+        mapping[data.skill_tree_location_name(tree_id, title)] = (
+            data.SKILL_TREE_LOCATION_BASE + skill_index
+        )
         
     return mapping
 
@@ -45,6 +50,15 @@ def create_all_locations(world: RubiniteWorld) -> None:
     for title, _ in data.TALISMANS:
         name = data.shop_location_name(title)
         shop_region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
+
+    # Skill tree purchases are reachable from the Challenge Area (the
+    # skill tree UI is always accessible, no portal needed).
+    challenge_area = world.get_region("Challenge Area")
+    for tree_id, title in data.SKILLS:
+        name = data.skill_tree_location_name(tree_id, title)
+        challenge_area.add_locations(
+            {name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation
+        )
 
     goal_key = world.get_goal_boss_key()
     goal_boss_name = next(name for key, name, _l, _s in data.BOSSES if key == goal_key)

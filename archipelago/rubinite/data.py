@@ -135,6 +135,7 @@ SHOP_EXPANSION_ITEM_ID = 72400
 # Base IDs. Location and item ranges are intentionally separate.
 LOCATION_BASE = 71000
 SHOP_LOCATION_BASE = 71100
+SKILL_TREE_LOCATION_BASE = 71200
 SIGIL_ITEM_BASE = 72000
 TALISMAN_ITEM_BASE = 72100
 SKILL_ITEM_BASE = 72200
@@ -177,3 +178,7 @@ def sigil_for_boss_key_or_fallback(key: str) -> str | None:
 
 def shop_location_name(title: str) -> str:
     return f"Wichiwi Shop: {title}"
+
+
+def skill_tree_location_name(tree_id: str, title: str) -> str:
+    return f"Skill Tree: {tree_id}: {title}"
