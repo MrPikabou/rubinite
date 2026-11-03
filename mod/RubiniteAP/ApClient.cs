@@ -409,6 +409,9 @@ namespace RubiniteAP
                         info.Players[slot] = display;
                 }
             }
+            
+            var gamesToRequest = new HashSet<string> { GameData.GameName };
+            
             if (packet["slot_info"] is JObject slotInfo)
             {
                 foreach (var prop in slotInfo.Properties())
@@ -417,9 +420,13 @@ namespace RubiniteAP
                     if (!(prop.Value is JObject slotObj)) continue;
                     var game = slotObj["game"]?.ToString();
                     if (!string.IsNullOrEmpty(game))
+                    {
                         _gameBySlot[slotId] = game;
+                        gamesToRequest.Add(game);
+                    }
                 }
             }
+            
             if (packet["checked_locations"] is JArray checkedLocations)
                 foreach (var id in checkedLocations)
                     info.CheckedLocations.Add((long)id);
@@ -429,8 +436,12 @@ namespace RubiniteAP
                 ConnectionChanged?.Invoke(true, "Connected to slot " + info.Slot);
                 Connected?.Invoke(info);
             });
+            
             SendStatus(ClientStatusPlaying);
-            SendPacket(new JObject { ["cmd"] = "GetDataPackage" });
+            
+            var gamesArray = new JArray();
+            foreach (var g in gamesToRequest) gamesArray.Add(g);
+            SendPacket(new JObject { ["cmd"] = "GetDataPackage", ["games"] = gamesArray });
         }
 
         private void HandleReceivedItems(JObject packet)
@@ -588,6 +599,11 @@ namespace RubiniteAP
             {
                 LogLine("DataPackage: 'data.games' is not a JObject (type=" + dataToken.Type + ").");
                 return;
+            }
+
+            if (games.Count == 0)
+            {
+                LogLine("DataPackage: Server returned an empty games list. Check server logs.");
             }
 
             _itemNamesByGame.Clear();

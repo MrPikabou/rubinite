@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using UnityEngine;
 
 namespace RubiniteAP
@@ -9,9 +10,16 @@ namespace RubiniteAP
         private readonly GameBridge _bridge;
         private readonly ApClient _client;
         private readonly Settings _settings;
-        private Rect _window = new Rect(24f, 24f, 470f, 540f);
+        private Rect _window = new Rect(24f, 24f, 500f, 620f);
         private bool _visible;
         private Vector2 _logScroll;
+
+        private int _tab;
+        private static readonly string[] TabNames = { "Settings", "Item Tracker" };
+        private Vector2 _trackerScrollReceived;
+        private Vector2 _trackerScrollSent;
+        private bool _onlyOtherPlayers;
+        private const int TrackerMaxItems = 100;
 
         public Overlay(GameBridge bridge, ApClient client, Settings settings)
         {
@@ -27,8 +35,7 @@ namespace RubiniteAP
 
         public void Draw()
         {
-            if (!_visible)
-                return;
+            if (!_visible) return;
             _window = GUILayout.Window(WindowId, _window, DrawWindow, "Rubinite Archipelago");
         }
 
@@ -36,6 +43,18 @@ namespace RubiniteAP
         {
             GUILayout.BeginVertical();
 
+            _tab = GUILayout.Toolbar(_tab, TabNames);
+            GUILayout.Space(4f);
+
+            if (_tab == 0) DrawSettingsTab();
+            else DrawTrackerTab();
+
+            GUILayout.EndVertical();
+            GUI.DragWindow(new Rect(0f, 0f, 10000f, 22f));
+        }
+
+        private void DrawSettingsTab()
+        {
             GUILayout.Label("Server host");
             _settings.Server.Value = GUILayout.TextField(_settings.Server.Value ?? "localhost", GUILayout.Height(22f));
             GUILayout.Label("Port");
@@ -107,9 +126,62 @@ namespace RubiniteAP
             if (GUILayout.Button("Close (F8)", GUILayout.Height(24f)))
                 _visible = false;
             GUILayout.EndHorizontal();
+        }
 
-            GUILayout.EndVertical();
-            GUI.DragWindow(new Rect(0f, 0f, 10000f, 22f));
+        private void DrawTrackerTab()
+        {
+            _onlyOtherPlayers = GUILayout.Toggle(
+                _onlyOtherPlayers,
+                "Only show items involving other players");
+
+            var received = _bridge.GetReceivedHistory();
+            var sent = _bridge.GetSentHistory().ToList();
+
+            int receivedCount = _onlyOtherPlayers
+                ? received.Count(r => r.SenderSlot != _bridge.MySlot)
+                : received.Count;
+            int sentCount = _onlyOtherPlayers
+                ? sent.Count(s => s.RecipientSlot != _bridge.MySlot)
+                : sent.Count;
+
+            // --- Received ---
+            GUILayout.Label($"Received ({receivedCount})");
+            _trackerScrollReceived = GUILayout.BeginScrollView(
+                _trackerScrollReceived, GUI.skin.box, GUILayout.Height(200f));
+
+            int shown = 0;
+            for (int i = received.Count - 1; i >= 0 && shown < TrackerMaxItems; i--)
+            {
+                var r = received[i];
+                if (_onlyOtherPlayers && r.SenderSlot == _bridge.MySlot) continue;
+                var sender = _bridge.GetPlayerName(r.SenderSlot);
+                GUILayout.Label($"{r.ItemName}  ←  {sender}");
+                shown++;
+            }
+            GUILayout.EndScrollView();
+
+            // --- Sent ---
+            GUILayout.Label($"Sent ({sentCount})");
+            _trackerScrollSent = GUILayout.BeginScrollView(
+                _trackerScrollSent, GUI.skin.box, GUILayout.Height(200f));
+
+            shown = 0;
+            for (int i = sent.Count - 1; i >= 0 && shown < TrackerMaxItems; i--)
+            {
+                var s = sent[i];
+                if (_onlyOtherPlayers && s.RecipientSlot == _bridge.MySlot) continue;
+                var recipient = _bridge.GetPlayerName(s.RecipientSlot);
+                var loc = s.LocationDisplayName ?? "";
+                GUILayout.Label($"{s.ItemName}  →  {recipient}   ({loc})");
+                shown++;
+            }
+            GUILayout.EndScrollView();
+
+            GUILayout.Space(2f);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Close (F8)", GUILayout.Height(24f)))
+                _visible = false;
+            GUILayout.EndHorizontal();
         }
 
         private void SaveSettings()

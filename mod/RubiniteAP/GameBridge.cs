@@ -43,6 +43,15 @@ namespace RubiniteAP
         private readonly Dictionary<string, int> _fillerDustValues = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _fillerIconNames = new Dictionary<string, string>();
 
+        private readonly Dictionary<string, Sprite> _customSpriteCache = new();
+        private readonly Dictionary<string, Sprite> _spriteByNameCache = new();
+        private readonly Dictionary<string, Sprite> _pickIconCache = new();
+
+        private readonly Dictionary<string, long> _skillTreeLocIdByTreeId = new();
+        private readonly Dictionary<string, string> _scoutedSkillItemByTreeId = new();
+        private readonly Dictionary<string, Sprite> _skillIconByName = new();
+        private readonly HashSet<string> _receivedItemHashSet = new();
+
         private readonly HashSet<string> _crossGameScoutedTitles = new HashSet<string>();
         private readonly HashSet<string> _enabledChecks = new HashSet<string>();
         
@@ -83,6 +92,29 @@ namespace RubiniteAP
             ApRunActive &&
             _seedHasDeathLink &&
             (RubiniteAPPlugin.Instance?.Settings?.DeathLinkEnabled?.Value ?? false);
+
+        public sealed class ScoutedLocationInfo
+        {
+            public long LocationId;
+            public long ItemId;
+            public int RecipientSlot;
+            public string ItemName;
+            public string LocationDisplayName;
+            public int Flags;
+        }
+
+        public sealed class ReceivedItemRecord
+        {
+            public string ItemName;
+            public int SenderSlot;
+            public long SourceLocationId;
+            public int Flags;
+        }
+
+        private readonly Dictionary<long, ScoutedLocationInfo> _scoutedLocations = new();
+        private readonly List<ReceivedItemRecord> _receivedHistory = new();
+
+        public int MySlot => _mySlot;
 
         public event Action LogChanged;
 
@@ -127,6 +159,8 @@ namespace RubiniteAP
             {
                 State.ResetForSlot(slot, info.SeedName);
                 _needsFullLock = true;
+                _receivedHistory.Clear();
+                _scoutedLocations.Clear();
             }
             else
             {
@@ -163,12 +197,23 @@ namespace RubiniteAP
             }
 
             _skillTreeLocationIds.Clear();
+            _skillTreeLocIdByTreeId.Clear();
             if (info.SlotData?["skill_tree_locations"] is JObject stLoc)
             {
                 foreach (var prop in stLoc.Properties())
                 {
                     if (long.TryParse(prop.Value.ToString(), out var id))
+                    {
                         _skillTreeLocationIds[prop.Name] = id;
+                        
+                        var parts = prop.Name.Split(':');
+                        if (parts.Length >= 2)
+                        {
+                            var treePart = parts[1].Trim();
+                            var treeId = treePart.Replace('-', '_');
+                            _skillTreeLocIdByTreeId[treeId] = id;
+                        }
+                    }
                 }
                 AddLog("Skill tree locations loaded (" + _skillTreeLocationIds.Count + " entries).");
             }
@@ -201,13 +246,19 @@ namespace RubiniteAP
                     if (int.TryParse(prop.Value.ToString(), out var price))
                         _effectiveSkillPrices[prop.Name] = price;
                 }
-                if (_effectiveSkillPrices.Count > 0)
+            }
+
+            _skillIconByName.Clear();
+            var skillOverview = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+            if (skillOverview != null)
+            {
+                foreach (var tree in skillOverview.GetAllData())
                 {
-                    AddLog("Skill prices loaded (" + _effectiveSkillPrices.Count + " entries, mode=" + _skillPriceMode + ").");
-                    foreach (var kv in _effectiveSkillPrices)
+                    if (tree == null) continue;
+                    if (_skillItemByTreeId.TryGetValue(tree.DisplayName, out var sName))
                     {
-                        AddLog($"  skill price: '{kv.Key}' = {kv.Value}");
-                        break;
+                        var icon = GetSkillIcon(tree);
+                        if (icon != null) _skillIconByName[sName] = icon;
                     }
                 }
             }
@@ -320,6 +371,27 @@ namespace RubiniteAP
             }
             AddLog("Enabled checks: " + string.Join(", ", _enabledChecks));
 
+            // Scout all boss locations so the tracker can resolve "which item did I send?"
+            var trackerScoutTargets = new HashSet<long>();
+            foreach (var levelName in _bossSlotInfoByLevel.Keys)
+            {
+                var boss = GameData.FindByLevel(levelName);
+                if (boss == null) continue;
+                trackerScoutTargets.Add(boss.LocationBase);
+                if (_enabledChecks.Contains("nohit"))      trackerScoutTargets.Add(boss.LocationBase + 1);
+                if (_enabledChecks.Contains("notalisman")) trackerScoutTargets.Add(boss.LocationBase + 2);
+                if (_enabledChecks.Contains("flawless"))   trackerScoutTargets.Add(boss.LocationBase + 3);
+                if (_enabledChecks.Contains("rank"))       trackerScoutTargets.Add(boss.LocationBase + 4);
+            }
+            foreach (var loc in info.CheckedLocations)
+                trackerScoutTargets.Add(loc);
+
+            if (trackerScoutTargets.Count > 0)
+            {
+                Client.RequestLocationScoutsWhenReady(trackerScoutTargets);
+                AddLog($"Queued scouts for {trackerScoutTargets.Count} tracker locations.");
+            }
+
             State.AddChecked(info.CheckedLocations);
             State.Save();
 
@@ -384,7 +456,12 @@ namespace RubiniteAP
 
             bool isCrossGame = playerId != _mySlot;
             if (isCrossGame && _playerNames.TryGetValue(playerId, out var otherName))
-                display = otherName + "'s " + display;
+            {
+                if (display.StartsWith("Item #"))
+                    display = "Unknown item from " + otherName;
+                else
+                    display = otherName + "'s " + display;
+            }
 
             if (isCrossGame)
                 _crossGameScoutedTitles.Add(title);
@@ -394,6 +471,37 @@ namespace RubiniteAP
             _scoutedShopItems[title] = display;
             _scoutedShopFlags[title] = flags;
             // TODO AddLog("Scouted: '" + title + "' -> '" + display + "'");
+
+            string trackerName;
+            if (!string.IsNullOrEmpty(local))
+                trackerName = local;
+            else if (!string.IsNullOrEmpty(serverName))
+                trackerName = serverName;
+            else
+            {
+                var resolved = Client.LookupCrossGameItemName(playerId, itemId);
+                trackerName = !string.IsNullOrEmpty(resolved) ? resolved : "Item #" + itemId;
+            }
+
+            _scoutedLocations[locationId] = new ScoutedLocationInfo
+            {
+                LocationId = locationId,
+                ItemId = itemId,
+                RecipientSlot = playerId,
+                ItemName = trackerName,
+                LocationDisplayName = ResolveLocationDisplayName(locationId),
+                Flags = flags,
+            };
+
+            if (title != null && title.StartsWith("Skill Tree: "))
+            {
+                var parts = title.Split(':');
+                if (parts.Length >= 2)
+                {
+                    var treeId = parts[1].Trim().Replace('-', '_');
+                    _scoutedSkillItemByTreeId[treeId] = display;
+                }
+            }
         }
 
         public bool TryGetScoutedShopItem(string talismanTitle, out string itemName)
@@ -401,13 +509,7 @@ namespace RubiniteAP
         
         public bool TryGetScoutedSkillTreeItem(string treeDisplayId, out string itemName)
         {
-            if (!GameData.SkillTitles.TryGetValue(treeDisplayId, out var title))
-            {
-                itemName = null;
-                return false;
-            }
-            var key = "Skill Tree: " + treeDisplayId.Replace('_', '-') + ": " + title;
-            return _scoutedShopItems.TryGetValue(key, out itemName);
+            return _scoutedSkillItemByTreeId.TryGetValue(treeDisplayId, out itemName);
         }
 
         /// <summary>
@@ -555,6 +657,38 @@ namespace RubiniteAP
         private void OnItemsReceived(int index, List<NetworkItem> items)
         {
             var fullInventory = index == 0;
+            if (fullInventory)
+            {
+                _receivedHistory.Clear();
+                _receivedItemHashSet.Clear();
+            }
+
+            // Build tracker history independently of LastItemIndex tracking
+            foreach (var item in items)
+            {
+                string histName;
+                if (!_itemNames.TryGetValue(item.ItemId, out histName) || string.IsNullOrEmpty(histName))
+                {
+                    var resolved = Client.LookupCrossGameItemName(item.Player, item.ItemId);
+                    if (!string.IsNullOrEmpty(resolved))
+                    {
+                        histName = resolved;
+                    }
+                    else
+                    {
+                        var pName = GetPlayerName(item.Player);
+                        histName = "Unknown item from " + pName;
+                    }
+                }
+                _receivedHistory.Add(new ReceivedItemRecord
+                {
+                    ItemName = histName,
+                    SenderSlot = item.Player,
+                    SourceLocationId = item.LocationId,
+                    Flags = item.Flags,
+                });
+            }
+
             // Remember how many items were already present before we reset.
             // On a full inventory replay (index=0), everything below this position
             // was already processed in a previous session and its dust is already
@@ -585,8 +719,10 @@ namespace RubiniteAP
                     AddLog("Received item #" + item.ItemId + " from another world.");
                     continue;
                 }
+
                 State.AddItem(name);
                 added.Add(name);
+                _receivedItemHashSet.Add(name);
 
                 if (name.StartsWith("Skill "))
                     AddLog($"Skill item received: '{name}' (HasItem={State.HasItem(name)})");
@@ -1135,7 +1271,7 @@ namespace RubiniteAP
         {
             if (string.IsNullOrEmpty(treeDisplayId)) return false;
             return _skillItemByTreeId.TryGetValue(treeDisplayId, out var itemName)
-                && State.HasItem(itemName);
+                && _receivedItemHashSet.Contains(itemName);
         }
 
         /// <summary>
@@ -1147,9 +1283,8 @@ namespace RubiniteAP
         public bool IsSkillPurchased(string treeDisplayId)
         {
             if (string.IsNullOrEmpty(treeDisplayId)) return false;
-            if (!GameData.SkillTitles.TryGetValue(treeDisplayId, out var title)) return false;
-            var locName = "Skill Tree: " + treeDisplayId.Replace('_', '-') + ": " + title;
-            return _skillTreeLocationIds.TryGetValue(locName, out var locId) && State.HasChecked(locId);
+            return _skillTreeLocIdByTreeId.TryGetValue(treeDisplayId, out var locId) 
+                && State.HasChecked(locId);
         }
 
         /// <summary>Write item ownership into game flags, without touching instantiated skills.</summary>
@@ -1625,7 +1760,7 @@ namespace RubiniteAP
             }
         }
 
-        private static Sprite GetSkillIcon(SkillTreeData tree)
+        private Sprite GetSkillIcon(SkillTreeData tree)
         {
             if (tree == null || string.IsNullOrEmpty(tree.DisplayName)) return null;
             var iconName = SkillTreeIconName(tree.DisplayName);
@@ -2019,6 +2154,10 @@ namespace RubiniteAP
 
         public Sprite LoadCustomSprite(string fileName, float targetHeight = 0f, Texture2D shapeTex = null, float forcedPpu = 0f)
         {
+            string cacheKey = fileName + "|" + targetHeight + "|" + forcedPpu;
+            if (_customSpriteCache.TryGetValue(cacheKey, out var cached))
+                return cached;
+
             string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
             if (System.IO.File.Exists(path))
             {
@@ -2039,12 +2178,12 @@ namespace RubiniteAP
                     }
                     
                     float ppu = 100f;
-                    if (forcedPpu > 0f)
-                        ppu = forcedPpu;
-                    else if (targetHeight > 0f)
-                        ppu = tex.height / targetHeight; 
+                    if (forcedPpu > 0f) ppu = forcedPpu;
+                    else if (targetHeight > 0f) ppu = tex.height / targetHeight; 
 
-                    return Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
+                    var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
+                    _customSpriteCache[cacheKey] = sprite;
+                    return sprite;
                 }
                 catch (Exception ex)
                 {
@@ -2270,6 +2409,10 @@ namespace RubiniteAP
         {
             if (string.IsNullOrEmpty(itemName)) return null;
 
+            string cacheKey = itemName + "|" + isCrossGame;
+            if (_pickIconCache.TryGetValue(cacheKey, out var cachedIcon))
+                return cachedIcon;
+
             // Cross-game items have no local icon — explicit flag from the scout,
             // not a name heuristic. Vanilla names like "Mira's Shadow" would
             // otherwise be mis-detected.
@@ -2295,24 +2438,8 @@ namespace RubiniteAP
                 return LoadCustomSprite("ap_icon_talisman.png", 0.5f);
             }
 
-            if (itemName.StartsWith("Skill "))
-            {
-                var overview = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
-                if (overview != null)
-                {
-                    foreach (var tree in overview.GetAllData())
-                    {
-                        if (tree == null) continue;
-                        var treeItemName = _skillItemByTreeId.TryGetValue(tree.DisplayName, out var n) ? n : null;
-                        if (treeItemName == itemName)
-                        {
-                            var icon = GetSkillIcon(tree);
-                            if (icon != null) return icon;
-                        }
-                    }
-                }
-                return LoadCustomSprite("ap_icon_skill.png", 0.5f);
-            }
+            if (itemName.StartsWith("Skill ") && _skillIconByName.TryGetValue(itemName, out var skillIcon))
+                return skillIcon;
 
             if (_fillerDustValues.ContainsKey(itemName))
             {
@@ -2341,12 +2468,19 @@ namespace RubiniteAP
             return LoadCustomSprite("ap_icon_unknown.png", 0.5f);
         }
 
-        private static Sprite FindSpriteByName(string name)
+        private Sprite FindSpriteByName(string name)
         {
+            if (string.IsNullOrEmpty(name)) return null;
+            if (_spriteByNameCache.TryGetValue(name, out var cached))
+                return cached;
+
             foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
             {
                 if (s != null && s.name == name)
+                {
+                    _spriteByNameCache[name] = s;
                     return s;
+                }
             }
             return null;
         }
@@ -2544,6 +2678,41 @@ namespace RubiniteAP
             {
                 AddLog("Death forgiven (" + _deathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
             }
+        }
+
+         public string GetPlayerName(int slot)
+        {
+            if (slot == _mySlot) return "You";
+            if (_playerNames.TryGetValue(slot, out var name)) return name;
+            return "Player " + slot;
+        }
+
+        public IReadOnlyList<ReceivedItemRecord> GetReceivedHistory() => _receivedHistory;
+
+        public IEnumerable<ScoutedLocationInfo> GetSentHistory()
+        {
+            foreach (var locId in State.Checked)
+                if (_scoutedLocations.TryGetValue(locId, out var info))
+                    yield return info;
+        }
+
+        public string ResolveLocationDisplayName(long locationId)
+        {
+            foreach (var levelName in _bossSlotInfoByLevel.Keys)
+            {
+                var boss = GameData.FindByLevel(levelName);
+                if (boss == null) continue;
+                if (locationId >= boss.LocationBase && locationId < boss.LocationBase + 5)
+                {
+                    var idx = (int)(locationId - boss.LocationBase);
+                    return GameData.LocationName(boss, idx) ?? $"{boss.Name} ({idx})";
+                }
+            }
+            foreach (var kv in _shopLocationIds)
+                if (kv.Value == locationId) return "Shop: " + kv.Key;
+            foreach (var kv in _skillTreeLocationIds)
+                if (kv.Value == locationId) return "Skill: " + kv.Key;
+            return "Location #" + locationId;
         }
     }
 
