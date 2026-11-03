@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from worlds.AutoWorld import World
-from .options import RubiniteOptions
+from .options import RubiniteOptions, RubiniteWebWorld
 
 from . import data, items, locations, regions, rules
 
@@ -25,6 +25,7 @@ class RubiniteWorld(World):
     origin_region_name = "Challenge Area"
     options_dataclass = RubiniteOptions
     options: RubiniteOptions
+    web = RubiniteWebWorld()
 
     def create_regions(self) -> None:
         regions.create_and_connect_regions(self)

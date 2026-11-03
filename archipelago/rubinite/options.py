@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from Options import Choice, PerGameCommonOptions, Range, Toggle
+from Options import Choice, PerGameCommonOptions, Range, Toggle, OptionGroup
+from worlds.AutoWorld import WebWorld
 from . import data
 
 
@@ -178,3 +179,35 @@ class RubiniteOptions(PerGameCommonOptions):
     skill_price_min: SkillPriceMin
     skill_price_max: SkillPriceMax
     player_color: PlayerColor
+
+
+class RubiniteWebWorld(WebWorld):
+    game = "Rubinite"
+    option_groups = [
+        OptionGroup("Goal & Progression", [
+            GoalBoss,
+            BossShuffle,
+            StartingBossCount,
+            StartingBossSelection,
+        ]),
+        OptionGroup("Checks", [
+            EnableNoHitClear,
+            EnableNoTalismanClear,
+            EnableFlawlessClear,
+            EnableRankClear,
+            RequiredRank,
+        ]),
+        OptionGroup("Shop & Skill Prices", [
+            ProgressiveShop,
+            StartingShopGroups,
+            ShopPriceMode,
+            ShopPriceMin,
+            ShopPriceMax,
+            SkillPriceMode,
+            SkillPriceMin,
+            SkillPriceMax,
+        ]),
+        OptionGroup("Cosmetic", [
+            PlayerColor,
+        ]),
+    ]
