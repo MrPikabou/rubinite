@@ -30,19 +30,19 @@ namespace RubiniteAP
         // Keep this order in sync with archipelago/rubinite/data.py.
         public static readonly BossInfo[] Bosses =
         {
-            new BossInfo("Beast",      "The Beast",           "BeastLevel",         null,                  true, 71000),
-            new BossInfo("Guardian",   "Faye the Guardian",   "GuardianLevel",      null,                  true, 71005),
-            new BossInfo("EyesTree",   "The Red-Eyed Tree",   "EyesTreeLevel",      null,                  true, 71010),
-            new BossInfo("Cult",       "The Priest",          "CultLevel",          "Cult Sigil",          false, 71015),
-            new BossInfo("PlagueBird", "The Gravekeeper",     "PlagueLevel",        "Gravekeeper Sigil",   false, 71020),
-            new BossInfo("PlagueRoot", "The Plaguebearer",    "PlagueRootLevel",    "Plaguebearer Sigil",  false, 71025),
-            new BossInfo("Nestling",   "The Martyred Angel",  "NestlingLevel",      "Nestling Sigil",      false, 71030),
-            new BossInfo("Guardian2",  "Faye II",             "GuardianLevel2",     "Faye II Sigil",       false, 71035),
-            new BossInfo("Ghost",      "The Ghost",           "GhostLevel",         "Ghost Sigil",         false, 71040),
-            new BossInfo("Master",     "Roy the Hunter",      "MasterLevel",        "Hunter Sigil",        false, 71045),
-            new BossInfo("Queen",      "The Puppet Master",   "QueenLevel",         "Puppet Master Sigil", false, 71050),
-            new BossInfo("Witch",      "Alcina the Witch",    "Witch_FirstRunLevel", "Witch Sigil",        false, 71055),
-            new BossInfo("Witch2",     "Alcina, True Form",   "WitchLevel",         "Witch II Sigil",      false, 71060),
+            new BossInfo("Beast",       "The Beast",           "BeastLevel",          null,                  true,  71000),
+            new BossInfo("Guardian",    "Faye the Guardian",   "GuardianLevel",       null,                  true,  71005),
+            new BossInfo("Cult",        "The Priest",          "CultLevel",           "Cult Sigil",          false, 71010),
+            new BossInfo("Gravekeeper", "The Gravekeeper",     "PlagueLevel",         "Gravekeeper Sigil",   false, 71015),
+            new BossInfo("PlagueRoot",  "The Plaguebearer",    "PlagueRootLevel",     "Plaguebearer Sigil",  false, 71020),
+            new BossInfo("Nestling",    "The Martyred Angel",  "NestlingLevel",       "Nestling Sigil",      false, 71025),
+            new BossInfo("Guardian2",   "Faye II",             "GuardianLevel2",      "Faye II Sigil",       false, 71030),
+            new BossInfo("Ghost",       "The Ghost",           "GhostLevel",          "Ghost Sigil",         false, 71035),
+            new BossInfo("Master",      "Roy the Hunter",      "MasterLevel",         "Hunter Sigil",        false, 71040),
+            new BossInfo("EyesTree",    "The Red-Eyed Tree",   "EyesTreeLevel",       "EyesTree Sigil",      false, 71045),
+            new BossInfo("Queen",       "The Puppet Master",   "QueenLevel",          "Puppet Master Sigil", false, 71050),
+            new BossInfo("Witch",       "Alcina the Witch",    "Witch_FirstRunLevel", "Witch Sigil",         false, 71055),
+            new BossInfo("Witch2",      "Alcina, True Form",   "WitchLevel",          "Witch II Sigil",      false, 71060),
         };
 
         // First-tier skills stay unlocked so the run starts with a usable kit.
