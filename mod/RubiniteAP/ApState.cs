@@ -16,6 +16,7 @@ namespace RubiniteAP
         public List<string> Items = new List<string>();
         public List<long> Checked = new List<long>();
         public bool GoalSent;
+        public bool ChallengeSaveInitialized;
 
         [JsonIgnore]
         public string FilePath;
@@ -98,6 +99,7 @@ namespace RubiniteAP
             Items.Clear();
             Checked.Clear();
             GoalSent = false;
+            ChallengeSaveInitialized = false;
             Save();
         }
 

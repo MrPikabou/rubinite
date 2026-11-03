@@ -64,6 +64,7 @@ namespace RubiniteAP
         private int _startingShopGroups;
         private string _skillPriceMode = "vanilla";
 
+        private bool _dustResetThisRun;
         private string _playerColorKey = "default";
 
         public event Action LogChanged;
@@ -307,6 +308,7 @@ namespace RubiniteAP
 
             if (ApRunActive)
                 ApplyRuntime(_needsFullLock);
+
             _needsFullLock = false;
         }
 
@@ -325,7 +327,10 @@ namespace RubiniteAP
             else if (!string.IsNullOrEmpty(serverName))
                 display = serverName;
             else
-                display = "Item #" + itemId;
+            {
+                var resolved = Client.LookupCrossGameItemName(playerId, itemId);
+                display = !string.IsNullOrEmpty(resolved) ? resolved : "Item #" + itemId;
+            }
 
             bool isCrossGame = playerId != _mySlot;
             if (isCrossGame && _playerNames.TryGetValue(playerId, out var otherName))
@@ -608,10 +613,18 @@ namespace RubiniteAP
                             // If the player hasn't received this talisman via AP, remove it from the equipped list
                             if (!IsReceivedTalisman(talisman.talismanData))
                             {
+                                talisman.talismanData.isEquipped?.SetValue(0);
                                 core.equippedTalismanList.RemoveAt(i);
                             }
                         }
                     }
+                }
+
+                // Re-spawn the shop whenever the CA was reloaded (e.g. after a boss fight)
+                if (GameObject.Find("AP_Shop_Terminal") == null)
+                {
+                    SpawnShopObject();
+                    AddLog("Re-spawned Wichiwi AP Shop Terminal after scene reload.");
                 }
 
 
@@ -883,14 +896,31 @@ namespace RubiniteAP
         {
             try
             {
-                BackupChallengeSave();
+                var isContinuation = State.ChallengeSaveInitialized;
+
+                if (!isContinuation)
+                {
+                    // Fresh run: rebuild the challenge save from normal saves.
+                    BackupChallengeSave();
+                    DataSaver.currentSaveNumber = GameData.ChallengeSaveNumber;
+                    ChallengeSave.RefreshFromAllNormalSaves();
+                    State.ChallengeSaveInitialized = true;
+                    State.Save();
+                    _dustResetThisRun = false;
+                    AddLog("Starting a new AP run (challenge save rebuilt, dust reset).");
+                }
+                else
+                {
+                    // Continuation: preserve the challenge save from the previous session.
+                    // This keeps accumulated dust, equipped progress, etc.
+                    DataSaver.currentSaveNumber = GameData.ChallengeSaveNumber;
+                    _dustResetThisRun = true;
+                    AddLog("Continuing existing AP run (challenge save preserved, dust kept).");
+                }
+
                 ApRunActive = true;
                 _needsFullLock = true;
 
-                // Build a challenge save, then rewrite its flags before the game
-                // instantiates skills in GamePlayCore.SetUp().
-                DataSaver.currentSaveNumber = GameData.ChallengeSaveNumber;
-                ChallengeSave.RefreshFromAllNormalSaves();
                 DataSaver.LoadFlag();
                 ApplyToFlags(true);
                 DataSaver.SaveFlag(DataSaver.path_saveFolder);
@@ -953,6 +983,13 @@ namespace RubiniteAP
                     CopyDirectory(source, destination);
                     Directory.Delete(source, true);
                     RubiniteAPPlugin.Instance?.Bridge?.AddLog("Vanilla Challenge Save restored.");
+
+                    var bridge = RubiniteAPPlugin.Instance?.Bridge;
+                    if (bridge != null)
+                    {
+                        bridge.State.ChallengeSaveInitialized = false;
+                        bridge.State.Save();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -1036,8 +1073,22 @@ namespace RubiniteAP
                     else
                         talisman.storeState?.SetValue(AchievementState.ReadyToUnlock);
 
-                    // Reset equipped flag only during a full lock pass for items we don't own
-                    if (!received && lockUnreceived)
+                    // Only keep isEquipped=1 if the talisman is received AND actually
+                    // lives in the runtime equipped list. Otherwise the UI will falsely
+                    // show it as equipped.
+                    bool inRuntime = false;
+                    if (received)
+                    {
+                        var core = GetGamePlayCore();
+                        if (core?.equippedTalismanList != null)
+                        {
+                            foreach (var t in core.equippedTalismanList)
+                            {
+                                if (t?.talismanData == talisman) { inRuntime = true; break; }
+                            }
+                        }
+                    }
+                    if (!received || !inRuntime)
                         talisman.isEquipped?.SetValue(0);
                 }
             }
@@ -1163,9 +1214,13 @@ namespace RubiniteAP
 
                 if (GameSetting.Instance != null)
                 {
-                    // Reset Money (Blood Dust) to 0 for AP
-                    if (GameSetting.Instance.dustFlag != null)
-                        GameSetting.Instance.dustFlag.SetValue(0, "RubiniteAP");
+                    // Only reset the dust once per run, not on every level load
+                    if (!_dustResetThisRun)
+                    {
+                        if (GameSetting.Instance.dustFlag != null)
+                            GameSetting.Instance.dustFlag.SetValue(0, "RubiniteAP");
+                        _dustResetThisRun = true;
+                    }
 
                     // Apply the chosen AP Color
                     string skinId = GetSkinIdForColor(_playerColorKey);
@@ -1182,6 +1237,22 @@ namespace RubiniteAP
                 if (core != null && core.equippedTalismanList != null)
                 {
                     core.equippedTalismanList.Clear();
+                }
+
+                // Clear isEquipped flags on ALL talismans at run start, so stale flags
+                // from previous runs don't leak through
+                var talOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+                if (talOverview != null)
+                {
+                    foreach (var tal in talOverview.GetAllData())
+                    {
+                        if (tal == null) continue;
+                        if (string.IsNullOrEmpty(tal.DisplayName)) continue;
+                        if (tal.DisplayName.Contains("Exhibition")) continue;
+                        if (tal.DisplayName.Contains("TalismanData_")) continue;
+                        if (tal.DisplayName == "X19_Shield" || tal.DisplayName == "無") continue;
+                        tal.isEquipped?.SetValue(0);
+                    }
                 }
 
                 ApplyToFlags(true);

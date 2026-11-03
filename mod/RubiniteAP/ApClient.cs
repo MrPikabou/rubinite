@@ -57,6 +57,9 @@ namespace RubiniteAP
         public bool IsConnected => _connected;
         public bool IsConnecting => _connecting;
 
+        private Dictionary<string, Dictionary<long, string>> _itemNamesByGame = new();
+        private Dictionary<int, string> _gameBySlot = new();
+
         public event Action<ConnectedInfo> Connected;
         public event Action<int, List<NetworkItem>> ItemsReceived;
         public event Action<long, long, int, string, int> LocationScouted;
@@ -330,6 +333,10 @@ namespace RubiniteAP
                     Enqueue(() => LogLine("Server rejected a packet: " + packet["type"] + " " + packet["text"]));
                     break;
 
+                case "DataPackage":
+                    HandleDataPackage(packet);
+                    break;
+
                 case "Bounced":
                     // DeathLink and other bounce features are not used by this client.
                     break;
@@ -387,6 +394,17 @@ namespace RubiniteAP
                         info.Players[slot] = display;
                 }
             }
+            if (packet["slot_info"] is JObject slotInfo)
+            {
+                foreach (var prop in slotInfo.Properties())
+                {
+                    if (!int.TryParse(prop.Name, out var slotId)) continue;
+                    if (!(prop.Value is JObject slotObj)) continue;
+                    var game = slotObj["game"]?.ToString();
+                    if (!string.IsNullOrEmpty(game))
+                        _gameBySlot[slotId] = game;
+                }
+            }
             if (packet["checked_locations"] is JArray checkedLocations)
                 foreach (var id in checkedLocations)
                     info.CheckedLocations.Add((long)id);
@@ -397,6 +415,7 @@ namespace RubiniteAP
                 Connected?.Invoke(info);
             });
             SendStatus(ClientStatusPlaying);
+            SendPacket(new JObject { ["cmd"] = "GetDataPackage" });
         }
 
         private void HandleReceivedItems(JObject packet)
@@ -532,6 +551,41 @@ namespace RubiniteAP
                 ["locations"] = array,
                 ["create_as_hint"] = 0,
             });
+        }
+
+        private void HandleDataPackage(JObject packet)
+        {
+            var games = packet["data"]?["games"] as JObject;
+            if (games == null) return;
+
+            _itemNamesByGame.Clear();
+            foreach (var gameProp in games.Properties())
+            {
+                var itemMap = gameProp.Value?["item_name_to_id"] as JObject;
+                if (itemMap == null) continue;
+
+                var namesById = new Dictionary<long, string>();
+                foreach (var itemProp in itemMap.Properties())
+                {
+                    if (long.TryParse(itemProp.Value.ToString(), out var id))
+                        namesById[id] = itemProp.Name;
+                }
+                _itemNamesByGame[gameProp.Name] = namesById;
+            }
+
+            int totalItems = 0;
+            foreach (var m in _itemNamesByGame.Values) totalItems += m.Count;
+            Enqueue(() => LogLine("DataPackage loaded: " + _itemNamesByGame.Count + " games, "
+                                + totalItems + " items total."));
+        }
+
+        public string LookupCrossGameItemName(int slotId, long itemId)
+        {
+            if (_gameBySlot.TryGetValue(slotId, out var game)
+                && _itemNamesByGame.TryGetValue(game, out var map)
+                && map.TryGetValue(itemId, out var name))
+                return name;
+            return null;
         }
     }
 }
