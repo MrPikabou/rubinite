@@ -165,10 +165,41 @@ namespace RubiniteAP
 
         private static Uri BuildUri(string host, int port)
         {
-            if (host.StartsWith("ws://", StringComparison.OrdinalIgnoreCase) ||
-                host.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
-                return new Uri(host);
-            return new Uri("ws://" + host + ":" + port);
+            host = (host ?? "").Trim();
+
+            // Strip any scheme the user pasted into the Host field
+            if (host.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+                host = host.Substring(5);
+            else if (host.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+                host = host.Substring(6);
+
+            // Strip trailing slash
+            host = host.TrimEnd('/');
+
+            // Extract port from host field (host:port or [ipv6]:port)
+            int embeddedPort = 0;
+            int colonIdx = host.LastIndexOf(':');
+            if (colonIdx > 0 && colonIdx < host.Length - 1)
+            {
+                var tail = host.Substring(colonIdx + 1);
+                if (int.TryParse(tail, out var parsed) && parsed > 0)
+                {
+                    embeddedPort = parsed;
+                    host = host.Substring(0, colonIdx);
+                }
+            }
+
+            int effectivePort = embeddedPort > 0
+                ? embeddedPort
+                : (port > 0 ? port : 38281);
+
+            bool isLocal =
+                host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                || host == "127.0.0.1"
+                || host == "::1";
+
+            var scheme = isLocal ? "ws" : "wss";
+            return new Uri(scheme + "://" + host + ":" + effectivePort);
         }
 
         private void Enqueue(Action action)
