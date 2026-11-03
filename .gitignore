@@ -1,4 +1,4 @@
-d# Build output (dotnet build)
+# Build output (dotnet build)
 bin/
 obj/
 
@@ -9,9 +9,6 @@ BepInEx/*
 
 # Tools
 tools/*
-
-# Dist (generated apworld/yaml)
-dist/*
 
 # APWorld build artifacts
 archipelago/*.txt
