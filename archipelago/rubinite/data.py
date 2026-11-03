@@ -120,9 +120,9 @@ SKILLS = [
 # Format: (name, id_offset, weight, dust_value, icon_sprite_name)
 # icon_sprite_name maps to a Sprite asset in the game (UI_Crystal_*).
 FILLER_ITEMS = [
-    ("Small Blood Crystal", 0, 60, 100, "UI_Crystal_0"),
-    ("Blood Crystal",       1, 30, 250, "UI_Crystal_1"),
-    ("Large Blood Crystal", 2, 10, 500, "UI_Crystal_2"),
+    ("Small Blood Crystal", 0, 60, 250, "UI_Crystal_0"),
+    ("Blood Crystal",       1, 30, 750, "UI_Crystal_1"),
+    ("Large Blood Crystal", 2, 10, 1500, "UI_Crystal_2"),
 ]
 
 
