@@ -54,6 +54,7 @@ namespace RubiniteAP
 
             if (Settings.AutoConnect.Value && !string.IsNullOrWhiteSpace(Settings.Slot.Value))
             {
+                Client.SetDeathLinkEnabled(Settings.DeathLinkEnabled.Value);
                 Client.Connect(Settings.Server.Value, Settings.Port.Value, Settings.Slot.Value,
                     Settings.Password.Value, State.Uuid);
             }

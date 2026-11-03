@@ -95,6 +95,8 @@ class RubiniteWorld(World):
                 for name, _id, _w, dust, icon in data.FILLER_ITEMS
             ],
             "enabled_checks": enabled_slugs,
+            "death_link": self.options.death_link.value,
+            "death_link_amnesty": self.options.death_link_amnesty.value,
         }
     
     def generate_early(self) -> None:

@@ -67,6 +67,14 @@ namespace RubiniteAP
         private bool _dustResetThisRun;
         private string _playerColorKey = "default";
 
+        private bool _deathLinkEnabled;
+        private int _deathLinkAmnesty;
+        private int _deathsSinceLastSend;
+        private int _lastKnownPlayerHp = -1;
+        private bool _playerDeathFired;
+        private System.Reflection.FieldInfo _playerHpField;
+        private System.Reflection.MethodInfo _playerKillMethod;
+
         public event Action LogChanged;
 
         public GameBridge(ApState state, ApClient client)
@@ -89,6 +97,7 @@ namespace RubiniteAP
             Client.LocationScouted += OnLocationScouted;
             Client.DataPackageReady += OnDataPackageReady;
             Client.Log += AddLog;
+            Client.DeathLinkReceived += OnDeathLinkReceived;
         }
 
         private void OnConnectionChanged(bool connected, string message)
@@ -290,6 +299,20 @@ namespace RubiniteAP
 
             State.AddChecked(info.CheckedLocations);
             State.Save();
+
+            var seedHasDeathLink = info.SlotData?["death_link"]?.Value<bool>() ?? false;
+            _deathLinkAmnesty = info.SlotData?["death_link_amnesty"]?.Value<int>() ?? 3;
+            _deathLinkEnabled = seedHasDeathLink && RubiniteAPPlugin.Instance.Settings.DeathLinkEnabled.Value;
+            _deathsSinceLastSend = 0;
+            _lastKnownPlayerHp = -1;
+            _playerDeathFired = false;
+            _playerHpField = null;
+            _playerKillMethod = null;
+
+            if (_deathLinkEnabled)
+                AddLog("DeathLink enabled (amnesty=" + _deathLinkAmnesty + ").");
+            else if (seedHasDeathLink)
+                AddLog("DeathLink: seed has it, but client setting is off.");
 
             StatusMessage = "Connected as " + slot + (string.IsNullOrEmpty(info.SeedName) ? "" : " (" + info.SeedName + ")");
             AddLog(StatusMessage);
@@ -579,12 +602,16 @@ namespace RubiniteAP
             if (_startingRun)
                 return;
 
+            var sceneName = SceneManager.GetActiveScene().name;
+            
+            if (ApRunActive && _deathLinkEnabled && sceneName != "TitleMenu")
+                PollPlayerHpForDeathLink();
+
             bool wasActive = ApRunActive;
 
             if (ApRunActive && DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
                 ApRunActive = false;
 
-            var sceneName = SceneManager.GetActiveScene().name;
             if (ApRunActive && sceneName == "TitleMenu")
             {
                 ApRunActive = false;
@@ -2176,6 +2203,143 @@ namespace RubiniteAP
                 Client.RequestLocationScouts(_shopLocationIds.Values);
                 AddLog("Re-scouting " + _shopLocationIds.Count + " shop slots after DataPackage arrived.");
             }
+        }
+
+        private void OnDeathLinkReceived(string source, string cause)
+        {
+            if (!ApRunActive || !_deathLinkEnabled) return;
+            AddLog("DeathLink from " + source + ": " + cause);
+
+            var core = GetGamePlayCore();
+            if (core?.player == null) return;
+
+            if (TryKillLocalPlayer(core.player))
+            {
+                AddLog("Local player killed by DeathLink.");
+                _lastKnownPlayerHp = -1;
+                _playerDeathFired = false;
+                _deathsSinceLastSend = 0;
+            }
+            else
+            {
+                AddLog("Could not kill player (no HP field or kill method found).");
+            }
+        }
+
+        private void PollPlayerHpForDeathLink()
+        {
+            var core = GetGamePlayCore();
+            if (core?.player == null) return;
+
+            if (_playerHpField == null)
+            {
+                var t = core.player.GetType();
+                foreach (var name in new[] {
+                    "currentHp", "currentHP", "hp", "HP", "health", "Health",
+                    "currentHealth", "curHp", "CurHp", "hitPoint", "hitPoints" })
+                {
+                    var f = t.GetField(name,
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (f != null && (f.FieldType == typeof(int) || f.FieldType == typeof(float)))
+                    {
+                        _playerHpField = f;
+                        AddLog("DeathLink: HP field detected as '" + name + "'.");
+                        break;
+                    }
+                }
+                if (_playerHpField == null)
+                {
+                    AddLog("DeathLink: no HP field on player; outgoing disabled.");
+                    return;
+                }
+            }
+
+            int hp;
+            try
+            {
+                var raw = _playerHpField.GetValue(core.player);
+                hp = raw is int i ? i : (raw is float f ? (int)f : -1);
+            }
+            catch { return; }
+
+            if (hp > 0 && _lastKnownPlayerHp <= 0)
+                _playerDeathFired = false;           // respawn
+            else if (hp <= 0 && _lastKnownPlayerHp > 0 && !_playerDeathFired)
+            {
+                OnLocalPlayerDied();
+                _playerDeathFired = true;
+            }
+
+            _lastKnownPlayerHp = hp;
+        }
+
+        private void OnLocalPlayerDied()
+        {
+            _deathsSinceLastSend++;
+            if (_deathsSinceLastSend > _deathLinkAmnesty)
+            {
+                Client.SendDeathLink("died in " + SceneManager.GetActiveScene().name);
+                AddLog("DeathLink sent (" + _deathsSinceLastSend + " deaths).");
+                _deathsSinceLastSend = 0;
+            }
+            else
+            {
+                AddLog("Death forgiven (" + _deathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
+            }
+        }
+
+        private bool TryKillLocalPlayer(object player)
+        {
+            if (player == null) return false;
+            var type = player.GetType();
+
+            if (_playerKillMethod == null)
+            {
+                foreach (var name in new[] {
+                    "Die", "Kill", "KillPlayer", "KillSelf", "OnDeath",
+                    "DieNow", "ForceDeath", "TakeFatalDamage" })
+                {
+                    var m = type.GetMethod(name,
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null, Type.EmptyTypes, null);
+                    if (m != null) { _playerKillMethod = m; break; }
+                }
+            }
+
+            if (_playerKillMethod != null)
+            {
+                try { _playerKillMethod.Invoke(player, null); return true; }
+                catch (Exception ex) { AddLog("Kill method failed: " + ex.Message); }
+            }
+
+            if (_playerHpField == null)
+            {
+                foreach (var name in new[] {
+                    "currentHp", "currentHP", "hp", "HP", "health", "Health",
+                    "currentHealth", "curHp", "CurHp", "hitPoint", "hitPoints" })
+                {
+                    var f = type.GetField(name,
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (f != null && (f.FieldType == typeof(int) || f.FieldType == typeof(float)))
+                    {
+                        _playerHpField = f;
+                        break;
+                    }
+                }
+            }
+
+            if (_playerHpField != null)
+            {
+                try
+                {
+                    object zero = _playerHpField.FieldType == typeof(int) ? (object)0 : 0f;
+                    _playerHpField.SetValue(player, zero);
+                    return true;
+                }
+                catch (Exception ex) { AddLog("HP zero-set failed: " + ex.Message); }
+            }
+
+            return false;
         }
     }
 

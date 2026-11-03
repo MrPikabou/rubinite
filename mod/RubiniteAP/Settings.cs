@@ -10,6 +10,7 @@ namespace RubiniteAP
         public ConfigEntry<string> Password;
         public ConfigEntry<bool> AutoConnect;
         public ConfigEntry<bool> ShowOverlay;
+        public ConfigEntry<bool> DeathLinkEnabled;
 
         public void Bind(ConfigFile config)
         {
@@ -19,6 +20,8 @@ namespace RubiniteAP
             Password = config.Bind("Server", "Password", "", "Room password, if any.");
             AutoConnect = config.Bind("Server", "AutoConnect", true, "Connect automatically on game launch when a slot name is set.");
             ShowOverlay = config.Bind("UI", "ShowOverlayOnLaunch", true, "Show the Archipelago overlay when the game starts.");
+            DeathLinkEnabled = config.Bind("DeathLink", "Enabled", false,               
+                "Opt into DeathLink. Only takes effect if the seed also has death_link: true.");
         }
     }
 }

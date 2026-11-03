@@ -57,6 +57,7 @@ namespace RubiniteAP
         public bool IsConnected => _connected;
         public bool IsConnecting => _connecting;
         
+        private bool _deathLinkEnabled;
         private bool _dataPackageReceived;
         private List<long> _pendingScoutLocations;
 
@@ -68,6 +69,7 @@ namespace RubiniteAP
         public event Action<long, long, int, string, int> LocationScouted;
         public event Action<string> Log;
         public event Action<bool, string> ConnectionChanged;
+        public event Action<string, string> DeathLinkReceived;
         public event Action DataPackageReady;
 
         public void LogLine(string message)
@@ -347,7 +349,7 @@ namespace RubiniteAP
                     break;
 
                 case "Bounced":
-                    // DeathLink and other bounce features are not used by this client.
+                    HandleBounced(packet);
                     break;
             }
         }
@@ -369,7 +371,7 @@ namespace RubiniteAP
                 ["uuid"] = _uuid,
                 ["version"] = version,
                 ["items_handling"] = 0b111,
-                ["tags"] = new JArray("AP"),
+                ["tags"] = _deathLinkEnabled ? new JArray("AP", "DeathLink") : new JArray("AP"),
                 ["slot_data"] = true
             };
             packet["password"] = _password ?? "";
@@ -643,6 +645,48 @@ namespace RubiniteAP
                 && map.TryGetValue(itemId, out var name))
                 return name;
             return null;
+        }
+
+        public void SetDeathLinkEnabled(bool enabled)
+        {
+            _deathLinkEnabled = enabled;
+        }
+
+        public void SendDeathLink(string cause)
+        {
+            if (!_connected || !_deathLinkEnabled) return;
+            var data = new JObject
+            {
+                ["time"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                ["cause"] = string.IsNullOrEmpty(cause) ? "died" : cause,
+                ["source"] = _slotName ?? "Rubinite"
+            };
+            SendPacket(new JObject
+            {
+                ["cmd"] = "Bounce",
+                ["tags"] = new JArray("DeathLink"),
+                ["data"] = data
+            });
+        }
+
+        private void HandleBounced(JObject packet)
+        {
+            if (!_deathLinkEnabled) return;
+            if (!(packet["tags"] is JArray tags)) return;
+
+            bool isDeathLink = false;
+            foreach (var t in tags)
+                if (t?.ToString() == "DeathLink") { isDeathLink = true; break; }
+            if (!isDeathLink) return;
+
+            var data = packet["data"] as JObject;
+            var source = data?["source"]?.ToString() ?? "Unknown";
+            var cause = data?["cause"]?.ToString() ?? "Unknown";
+
+            // Ignore our own bounces echoed back
+            if (source == _slotName) return;
+
+            Enqueue(() => DeathLinkReceived?.Invoke(source, cause));
         }
     }
 }

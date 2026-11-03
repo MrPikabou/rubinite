@@ -159,6 +159,20 @@ class PlayerColor(Choice):
     default = 0
 
 
+class DeathLink(Toggle):
+    """Share deaths with other DeathLink players."""
+    display_name = "Death Link"
+    default = False
+
+
+class DeathLinkAmnesty(Range):
+    """Deaths forgiven before one is shared (0 = every death)."""
+    display_name = "Death Link Amnesty"
+    range_start = 0
+    range_end = 30
+    default = 3
+
+
 @dataclass
 class RubiniteOptions(PerGameCommonOptions):
     goal_boss: GoalBoss
@@ -179,6 +193,8 @@ class RubiniteOptions(PerGameCommonOptions):
     skill_price_min: SkillPriceMin
     skill_price_max: SkillPriceMax
     player_color: PlayerColor
+    death_link: DeathLink
+    death_link_amnesty: DeathLinkAmnesty
 
 
 class RubiniteWebWorld(WebWorld):
@@ -189,6 +205,8 @@ class RubiniteWebWorld(WebWorld):
             BossShuffle,
             StartingBossCount,
             StartingBossSelection,
+            DeathLink,
+            DeathLinkAmnesty,
         ]),
         OptionGroup("Checks", [
             EnableNoHitClear,
