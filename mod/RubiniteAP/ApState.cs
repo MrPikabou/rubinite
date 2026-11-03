@@ -13,6 +13,8 @@ namespace RubiniteAP
         public string Seed = "";
         public string Uuid = "";
         public int LastItemIndex;
+        public int PendingDust = 0;
+        public int LastKnownDust = 0;
         public List<string> Items = new List<string>();
         public List<long> Checked = new List<long>();
         public bool GoalSent;
@@ -99,6 +101,8 @@ namespace RubiniteAP
             Items.Clear();
             Checked.Clear();
             GoalSent = false;
+            PendingDust = 0;
+            LastKnownDust = 0;
             ChallengeSaveInitialized = false;
             Save();
         }

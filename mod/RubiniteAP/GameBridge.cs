@@ -64,7 +64,7 @@ namespace RubiniteAP
         private int _startingShopGroups;
         private string _skillPriceMode = "vanilla";
 
-        private bool _dustResetThisRun;
+        private bool _flagsInitializedThisRun;
         private string _playerColorKey = "default";
 
         private bool _seedHasDeathLink;
@@ -936,15 +936,16 @@ namespace RubiniteAP
                     ChallengeSave.RefreshFromAllNormalSaves();
                     State.ChallengeSaveInitialized = true;
                     State.Save();
-                    _dustResetThisRun = false;
+                    _flagsInitializedThisRun = false;
                     AddLog("Starting a new AP run (challenge save rebuilt, dust reset).");
                 }
                 else
                 {
                     // Continuation: preserve the challenge save from the previous session.
-                    // This keeps accumulated dust, equipped progress, etc.
                     DataSaver.currentSaveNumber = GameData.ChallengeSaveNumber;
-                    _dustResetThisRun = true;
+                    BackupChallengeSave();
+
+                    _flagsInitializedThisRun = true;
                     AddLog("Continuing existing AP run (challenge save preserved, dust kept).");
                 }
 
@@ -952,7 +953,15 @@ namespace RubiniteAP
                 _needsFullLock = true;
 
                 DataSaver.LoadFlag();
-                ApplyToFlags(true);
+
+                if (GameSetting.Instance?.dustFlag != null)
+                {
+                    int target = State.LastKnownDust;
+                    GameSetting.Instance.dustFlag.SetValue(target, "RubiniteAP");
+                    AddLog($"Dust after DoStartRun LoadFlag: set to {target} from ApState");
+                }
+
+                ApplyToFlags(true, false);
                 DataSaver.SaveFlag(DataSaver.path_saveFolder);
 
                 ChallengeSave.EnterFromTitle();
@@ -1013,13 +1022,6 @@ namespace RubiniteAP
                     CopyDirectory(source, destination);
                     Directory.Delete(source, true);
                     RubiniteAPPlugin.Instance?.Bridge?.AddLog("Vanilla Challenge Save restored.");
-
-                    var bridge = RubiniteAPPlugin.Instance?.Bridge;
-                    if (bridge != null)
-                    {
-                        bridge.State.ChallengeSaveInitialized = false;
-                        bridge.State.Save();
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -1240,18 +1242,31 @@ namespace RubiniteAP
                 return;
             try
             {
-                DataSaver.LoadFlag();
+                // Only reload flags from disk on the very first SetUp of a run.
+                // Doing it on every level load wipes dust the game accumulates
+                // during boss fights (dust is stored in GameSetting.dustFlag
+                // in-memory and only persisted on our explicit SaveFlag calls).
+                if (!_flagsInitializedThisRun)
+                {
+                    DataSaver.LoadFlag();
+
+                    if (GameSetting.Instance?.dustFlag != null)
+                    {
+                        int target = State.LastKnownDust + State.PendingDust;
+                        GameSetting.Instance.dustFlag.SetValue(target, "RubiniteAP");
+                        AddLog($"Dust restored from ApState: {target} (last={State.LastKnownDust}, pending={State.PendingDust})");
+                        State.LastKnownDust = target;
+                        State.PendingDust = 0;
+                        State.Save();
+                    }
+
+                    _flagsInitializedThisRun = true;
+                }
+
+                AddLog($"Dust in PrepareSaveFlags: current={GameSetting.Instance?.dustFlag?.GetValue()} pending={State.PendingDust} _flagsInitializedThisRun={_flagsInitializedThisRun}");
 
                 if (GameSetting.Instance != null)
                 {
-                    // Only reset the dust once per run, not on every level load
-                    if (!_dustResetThisRun)
-                    {
-                        if (GameSetting.Instance.dustFlag != null)
-                            GameSetting.Instance.dustFlag.SetValue(0, "RubiniteAP");
-                        _dustResetThisRun = true;
-                    }
-
                     // Apply the chosen AP Color
                     string skinId = GetSkinIdForColor(_playerColorKey);
                     if (GameSetting.Instance.rubySkinID != null)
@@ -1570,6 +1585,16 @@ namespace RubiniteAP
                 // _lastPortalLevel stays set: used to reposition the spawn point
                 // when we return to the Challenge Area.
             }
+
+            if (ApRunActive && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
+            {
+                if (GameSetting.Instance?.dustFlag != null)
+                    State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
+                State.Save();
+
+                try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
+                catch (Exception ex) { AddLog("Could not persist dust after boss: " + ex.Message); }
+            }
         }
 
         public static string GetTargetLevel(OnEnableLoadLevel component)
@@ -1739,6 +1764,15 @@ namespace RubiniteAP
 
             // Re-lock the talisman so it disappears from the shop
             ApplyRuntime(true);
+
+            if (GameSetting.Instance?.dustFlag != null)
+                State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
+            State.Save();
+            if (DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
+            {
+                try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
+                catch (Exception ex) { AddLog("Could not persist dust after shop purchase: " + ex.Message); }
+            }
         }
 
         public void HandleSkillTreePurchase(string treeId, string title)
