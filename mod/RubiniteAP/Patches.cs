@@ -623,8 +623,6 @@ namespace RubiniteAP
             bool received = bridge.IsSkillReceived(data.DisplayName);
             bool purchased = bridge.IsSkillPurchased(data.DisplayName);
 
-            // If we have the item but haven't bought the check yet, force the
-            // vanilla flag to false so the game lets us buy the check.
             if (received && !purchased)
             {
                 data.skillTreeDataDetail?.isUnlocked?.SetValue(false);
@@ -666,6 +664,7 @@ namespace RubiniteAP
                 if (apIcon != null)
                 {
                     Vector3 scaled = apItemName.StartsWith("Skill ") ? Vector3.one : new Vector3(0.65f, 0.65f, 1f);
+                    
                     if (__instance.icon != null && __instance.icon.sprite != apIcon)
                     {
                         __instance.icon.sprite = apIcon;
