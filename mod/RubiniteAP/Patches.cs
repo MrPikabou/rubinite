@@ -61,11 +61,33 @@ namespace RubiniteAP
             
             levelName = bridge.RemapBossScene(levelName);
 
-            if (levelName == "ChallengeArea" && !string.IsNullOrEmpty(bridge.LastPortalLevel))
+            if (levelName == "ChallengeArea")
             {
-                GameSetting.Instance.playerLastLeaveScene.SetValue(bridge.LastPortalLevel, "RubiniteAP");
-                GameSetting.Instance.playerLastScene.SetValue(bridge.LastPortalLevel, "RubiniteAP");
-                bridge.AddLog("Spawn override CA: forced playerLastLeaveScene to '" + bridge.LastPortalLevel + "'");
+                // Reset dust values when returning to CA
+                if (bridge._originalDustValues.Count > 0)
+                {
+                    var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+                    if (overview != null)
+                    {
+                        foreach (var kv in bridge._originalDustValues)
+                        {
+                            var data = overview.FindUniqueId(kv.Key);
+                            if (data != null)
+                            {
+                                data.dustFirstStage = kv.Value.first;
+                                data.dustFinalStage = kv.Value.final;
+                            }
+                        }
+                    }
+                    bridge._originalDustValues.Clear();
+                }
+
+                if (!string.IsNullOrEmpty(bridge.LastPortalLevel)) 
+                {
+                    GameSetting.Instance.playerLastLeaveScene.SetValue(bridge.LastPortalLevel, "RubiniteAP");
+                    GameSetting.Instance.playerLastScene.SetValue(bridge.LastPortalLevel, "RubiniteAP");
+                    bridge.AddLog("Spawn override CA: forced playerLastLeaveScene to '" + bridge.LastPortalLevel + "'");
+                }
             }
         
             return true;
@@ -143,7 +165,6 @@ namespace RubiniteAP
             if (__instance == null) return;
 
             var sceneName = __instance.gameObject.scene.name;
-            
             if (sceneName == "ChallengeArea")
             {
                 var portalLevel = bridge.LastPortalLevel;
@@ -847,6 +868,28 @@ namespace RubiniteAP
                         && mappedData.titleTerm != null)
                         __instance.levelNameLocalize.Term = mappedData.titleTerm.term;
                 }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(BloodDust), "SetBeGot")]
+    internal static class BloodDustSetBeGotPatch
+    {
+        private static void Postfix(BloodDust __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            if (bridge.BossDustMultiplier <= 1) return;
+
+            int baseAmount = (int)__instance.dustType;
+            int extraAmount = baseAmount * (bridge.BossDustMultiplier - 1);
+
+            if (extraAmount > 0)
+            {
+                var dust = GamePlayCore.Instance.dust;
+                dust.SetValue(dust.GetValue() + extraAmount, "RubiniteAP");
+                
+                bridge.AddLog($"Multiplied dust pickup: +{baseAmount} -> +{baseAmount + extraAmount}");
             }
         }
     }

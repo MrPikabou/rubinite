@@ -98,6 +98,7 @@ class RubiniteWorld(World):
             "enabled_checks": enabled_slugs,
             "death_link": self.options.death_link.value,
             "death_link_amnesty": self.options.death_link_amnesty.value,
+            "dust_multiplier": self.options.boss_dust_multiplier.value,
         }
     
     def generate_early(self) -> None:

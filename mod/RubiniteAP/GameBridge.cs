@@ -88,6 +88,9 @@ namespace RubiniteAP
         private readonly System.Collections.Concurrent.ConcurrentQueue<string> _logQueue
             = new System.Collections.Concurrent.ConcurrentQueue<string>();
 
+        public int BossDustMultiplier { get; private set; } = 1;
+        public readonly Dictionary<string, (int first, int final)> _originalDustValues = new();
+
         private bool DeathLinkActive =>
             ApRunActive &&
             _seedHasDeathLink &&
@@ -391,6 +394,10 @@ namespace RubiniteAP
                 Client.RequestLocationScoutsWhenReady(trackerScoutTargets);
                 AddLog($"Queued scouts for {trackerScoutTargets.Count} tracker locations.");
             }
+
+            BossDustMultiplier = info.SlotData?["dust_multiplier"]?.Value<int>() ?? 1;
+            if (BossDustMultiplier > 1)
+                AddLog("Boss Dust Multiplier enabled: x" + BossDustMultiplier);
 
             State.AddChecked(info.CheckedLocations);
             State.Save();
@@ -807,6 +814,19 @@ namespace RubiniteAP
         {
             FlushLogQueue();
 
+            if (ApRunActive && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
+            {
+                if (GameSetting.Instance?.dustFlag != null)
+                {
+                    int currentDust = GameSetting.Instance.dustFlag.GetValue();
+                    if (currentDust != State.LastKnownDust)
+                    {
+                        State.LastKnownDust = currentDust;
+                        State.Save();
+                    }
+                }
+            }
+
             if (_startingRun)
                 return;
 
@@ -902,163 +922,12 @@ namespace RubiniteAP
 
             // --- F12 DEBUG: Scan all UI sprites in the scene ---
             // TODO Debugging, delete later
-            if (Input.GetKeyDown(KeyCode.F12))
+            if (Input.GetKeyDown(KeyCode.F10))
             {
-                AddLog("=== SCANNING UI ASSETS ===");
-
-                // (a) Normal Scan
-                var sprites = Resources.FindObjectsOfTypeAll<SpriteRenderer>();
-                foreach (var sr in sprites)
-                {
-                    if (sr == null || sr.sprite == null || !sr.gameObject.scene.IsValid()) continue;
-                    if (!sr.gameObject.activeInHierarchy) continue;
-                    AddLog($"SR: GameObject='{sr.gameObject.name}', Sprite='{sr.sprite.name}'");
-                }
-
-                var images = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>();
-                foreach (var img in images)
-                {
-                    if (img == null || img.sprite == null || !img.gameObject.scene.IsValid()) continue;
-                    if (!img.gameObject.activeInHierarchy) continue;
-                    AddLog($"UI.Image: GameObject='{img.gameObject.name}', Sprite='{img.sprite.name}'");
-                }
-
-                var tmps = Resources.FindObjectsOfTypeAll<TMPro.TextMeshProUGUI>();
-                foreach (var tmp in tmps)
-                {
-                    if (tmp == null || !tmp.gameObject.scene.IsValid()) continue;
-                    if (!tmp.gameObject.activeInHierarchy) continue;
-                    AddLog($"TMP: GameObject='{tmp.gameObject.name}', Text='{tmp.text}'");
-                }
-
-                // (b) Searches for all BossStele_* sprites
-                AddLog("--- BossStele sprites ---");
-                var seenBoss = new HashSet<string>();
-                foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
-                {
-                    if (s == null || string.IsNullOrEmpty(s.name)) continue;
-                    if (s.name.StartsWith("BossStele_") && seenBoss.Add(s.name))
-                        AddLog($"SPRITE: '{s.name}' ({s.rect.width}x{s.rect.height})");
-                }
-
-                // (c) UI_Crystal_* (Blood-Dust-Icons)
-                AddLog("--- UI_Crystal sprites ---");
-                var seenCrystal = new HashSet<string>();
-                foreach (var s in Resources.FindObjectsOfTypeAll<Sprite>())
-                {
-                    if (s == null || string.IsNullOrEmpty(s.name)) continue;
-                    if (s.name.StartsWith("UI_Crystal_") && seenCrystal.Add(s.name))
-                        AddLog($"SPRITE: '{s.name}'");
-                }
-
-                AddLog("--- SkillTreeData structure (full) ---");
-                // (d)
-                var skOver = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
-                if (skOver != null && skOver.GetAllData() != null)
-                {
-                    SkillTreeData sample = null;
-                    foreach (var t in skOver.GetAllData()) { if (t != null) { sample = t; break; } }
-                    if (sample != null)
-                    {
-                        var flags = System.Reflection.BindingFlags.Public
-                                | System.Reflection.BindingFlags.NonPublic
-                                | System.Reflection.BindingFlags.Instance
-                                | System.Reflection.BindingFlags.FlattenHierarchy;
-
-                        AddLog($"SKILL SAMPLE: DisplayName='{sample.DisplayName}'");
-                        AddLog("--- TREE FIELDS ---");
-                        foreach (var f in sample.GetType().GetFields(flags))
-                        {
-                            object val = null;
-                            try { val = f.GetValue(sample); } catch { }
-                            string typeName = f.FieldType.Name;
-                            if (val == null) { AddLog($"  F.{f.Name} ({typeName}) = null"); continue; }
-                            if (val is Sprite sp) AddLog($"  F.{f.Name} ({typeName}) = Sprite('{sp.name}')");
-                            else if (val is UnityEngine.Object uo) AddLog($"  F.{f.Name} ({typeName}) = '{uo.name}'");
-                            else AddLog($"  F.{f.Name} ({typeName}) = {val}");
-                        }
-                        AddLog("--- TREE PROPERTIES ---");
-                        // NEW: recursive scan of skillName and secondRunSkillName
-                        foreach (var fieldName in new[] { "skillName", "secondRunSkillName" })
-                        {
-                            var sn = GetFieldOrProperty(sample, fieldName);
-                            if (sn == null)
-                            {
-                                AddLog($"--- {fieldName}: null ---");
-                                continue;
-                            }
-
-                            AddLog($"--- {fieldName} ({sn.GetType().Name}) ---");
-                            var snFlags = System.Reflection.BindingFlags.Public
-                                    | System.Reflection.BindingFlags.NonPublic
-                                    | System.Reflection.BindingFlags.Instance
-                                    | System.Reflection.BindingFlags.FlattenHierarchy;
-
-                            foreach (var f in sn.GetType().GetFields(snFlags))
-                            {
-                                object val = null;
-                                try { val = f.GetValue(sn); } catch { }
-                                if (val == null) { AddLog($"  {fieldName}.F.{f.Name} ({f.FieldType.Name}) = null"); continue; }
-                                if (val is UnityEngine.Object uo) AddLog($"  {fieldName}.F.{f.Name} ({f.FieldType.Name}) = '{uo.name}'");
-                                else AddLog($"  {fieldName}.F.{f.Name} ({f.FieldType.Name}) = {val}");
-                            }
-                            foreach (var p in sn.GetType().GetProperties(snFlags))
-                            {
-                                if (p.GetIndexParameters().Length > 0) continue;
-                                object val = null;
-                                try { val = p.GetValue(sn); } catch { }
-                                if (val == null) continue;
-                                if (val is UnityEngine.Object uo) AddLog($"  {fieldName}.P.{p.Name} ({p.PropertyType.Name}) = '{uo.name}'");
-                                else AddLog($"  {fieldName}.P.{p.Name} ({p.PropertyType.Name}) = {val}");
-                            }
-                        }
-                    }
-                }
-
-                // (e) Skill tree icons — finds every sprite whose name looks like a skill icon
-                AddLog("--- SkillFrame → Icon mapping ---");
-                var seenMap = new HashSet<string>();
-                foreach (var img in Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>())
-                {
-                    if (img == null || !img.gameObject.scene.IsValid()) continue;
-                    if (img.gameObject.name != "Icon") continue;
-                    if (img.sprite == null) continue;
-                    if (!img.sprite.name.StartsWith("SkillsTreeIcon_")) continue;
-                    if (img.sprite.name.StartsWith("SkillsTreeIcon_2_")) continue;
-                    if (img.sprite.name.StartsWith("SkillsTreeIcon_frame_")) continue;
-                    if (img.sprite.name.StartsWith("SkillsTreeIcon_big_")) continue;
-
-                    // Walk up the full chain, building "RootFrame > ... > IconMask > Icon"
-                    var chain = new List<string>();
-                    var t = img.transform;
-                    while (t != null)
-                    {
-                        chain.Insert(0, t.name);
-                        t = t.parent;
-                    }
-                    var path = string.Join(" > ", chain);
-                    var key = img.sprite.name;
-                    if (seenMap.Add(key + "|" + path))
-                    {
-                        AddLog($"SKILLMAP: '{path}' = '{img.sprite.name}'");
-                    }
-                }
-
-                AddLog("--- Skill Flags Live State ---");
-                var sko = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
-                if (sko != null)
-                {
-                    foreach (var t in sko.GetAllData())
-                    {
-                        if (t == null || t.skillTreeDataDetail == null) continue;
-                        var u = t.skillTreeDataDetail.isUnlocked?.GetValue() ?? false;
-                        var k = t.skillTreeDataDetail.isKnown?.GetValue() ?? false;
-                        var u2 = t.secondRunSkillTreeDataDetail?.isUnlocked?.GetValue() ?? false;
-                        var k2 = t.secondRunSkillTreeDataDetail?.isKnown?.GetValue() ?? false;
-                        AddLog($"SKILLFLAG: {t.DisplayName} u1={u} k1={k} u2={u2} k2={k2}");
-                    }
-                }
-
+                AddLog("=== SCANNING DUST METHODS ===");
+                
+                // Method for Scanning ingame Assets
+                
                 AddLog("=== SCAN COMPLETE ===");
             }
         }

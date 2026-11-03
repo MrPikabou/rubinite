@@ -47,6 +47,14 @@ class StartingBossSelection(Choice):
     default = 0
 
 
+class BossDustMultiplier(Range):
+    """Multiplies the amount of Blood Dust bosses drop."""
+    display_name = "Boss Dust Multiplier"
+    range_start = 1
+    range_end = 10
+    default = 1
+
+
 class EnableNoHitClear(Toggle):
     """Enable the No-Hit Clear check for each boss."""
     display_name = "Enable No-Hit Clear"
@@ -179,6 +187,7 @@ class RubiniteOptions(PerGameCommonOptions):
     boss_shuffle: BossShuffle
     starting_boss_count: StartingBossCount
     starting_boss_selection: StartingBossSelection
+    boss_dust_multiplier: BossDustMultiplier
     enable_nohit_clear: EnableNoHitClear
     enable_notalisman_clear: EnableNoTalismanClear
     enable_flawless_clear: EnableFlawlessClear
@@ -203,6 +212,7 @@ class RubiniteWebWorld(WebWorld):
         OptionGroup("Goal & Progression", [
             GoalBoss,
             BossShuffle,
+            BossDustMultiplier,
             StartingBossCount,
             StartingBossSelection,
             DeathLink,
