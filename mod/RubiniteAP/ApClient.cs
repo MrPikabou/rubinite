@@ -56,6 +56,9 @@ namespace RubiniteAP
 
         public bool IsConnected => _connected;
         public bool IsConnecting => _connecting;
+        
+        private bool _dataPackageReceived;
+        private List<long> _pendingScoutLocations;
 
         private Dictionary<string, Dictionary<long, string>> _itemNamesByGame = new();
         private Dictionary<int, string> _gameBySlot = new();
@@ -65,6 +68,7 @@ namespace RubiniteAP
         public event Action<long, long, int, string, int> LocationScouted;
         public event Action<string> Log;
         public event Action<bool, string> ConnectionChanged;
+        public event Action DataPackageReady;
 
         public void LogLine(string message)
         {
@@ -91,6 +95,10 @@ namespace RubiniteAP
             _connecting = true;
             _cts?.Dispose();
             _cts = new CancellationTokenSource();
+            _dataPackageReceived = false;
+            _pendingScoutLocations = null;
+            _itemNamesByGame.Clear();
+            _gameBySlot.Clear();
             var token = _cts.Token;
 
             _receiveTask = Task.Run(async () =>
@@ -334,6 +342,7 @@ namespace RubiniteAP
                     break;
 
                 case "DataPackage":
+                    LogLine("Received DataPackage packet from server.");
                     HandleDataPackage(packet);
                     break;
 
@@ -555,14 +564,29 @@ namespace RubiniteAP
 
         private void HandleDataPackage(JObject packet)
         {
-            var games = packet["data"]?["games"] as JObject;
-            if (games == null) return;
+            var dataToken = packet["data"];
+            if (dataToken == null)
+            {
+                LogLine("DataPackage: 'data' field missing.");
+                return;
+            }
+
+            var games = dataToken["games"] as JObject;
+            if (games == null)
+            {
+                LogLine("DataPackage: 'data.games' is not a JObject (type=" + dataToken.Type + ").");
+                return;
+            }
 
             _itemNamesByGame.Clear();
             foreach (var gameProp in games.Properties())
             {
                 var itemMap = gameProp.Value?["item_name_to_id"] as JObject;
-                if (itemMap == null) continue;
+                if (itemMap == null)
+                {
+                    LogLine("DataPackage: game '" + gameProp.Name + "' has no item_name_to_id.");
+                    continue;
+                }
 
                 var namesById = new Dictionary<long, string>();
                 foreach (var itemProp in itemMap.Properties())
@@ -575,8 +599,41 @@ namespace RubiniteAP
 
             int totalItems = 0;
             foreach (var m in _itemNamesByGame.Values) totalItems += m.Count;
-            Enqueue(() => LogLine("DataPackage loaded: " + _itemNamesByGame.Count + " games, "
-                                + totalItems + " items total."));
+
+            _dataPackageReceived = true;
+
+            Enqueue(() =>
+            {
+                LogLine("DataPackage loaded: " + _itemNamesByGame.Count + " games, "
+                    + totalItems + " items total.");
+                DataPackageReady?.Invoke();
+            });
+
+            // If scouts were queued while we were waiting, fire them now
+            if (_pendingScoutLocations != null && _pendingScoutLocations.Count > 0)
+            {
+                var pending = _pendingScoutLocations;
+                _pendingScoutLocations = null;
+                RequestLocationScouts(pending);
+            }
+        }
+
+        public void RequestLocationScoutsWhenReady(IEnumerable<long> locations)
+        {
+            var list = new List<long>(locations);
+            if (list.Count == 0) return;
+
+            if (_dataPackageReceived)
+            {
+                RequestLocationScouts(list);
+            }
+            else
+            {
+                // Hold until DataPackage arrives — otherwise cross-game items
+                // will show as "Item #NNN" with no name.
+                _pendingScoutLocations = list;
+                Enqueue(() => LogLine("Queued " + list.Count + " scouts until DataPackage arrives."));
+            }
         }
 
         public string LookupCrossGameItemName(int slotId, long itemId)

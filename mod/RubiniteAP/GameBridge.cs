@@ -87,6 +87,7 @@ namespace RubiniteAP
             Client.ItemsReceived += OnItemsReceived;
             Client.ConnectionChanged += OnConnectionChanged;
             Client.LocationScouted += OnLocationScouted;
+            Client.DataPackageReady += OnDataPackageReady;
             Client.Log += AddLog;
         }
 
@@ -139,8 +140,8 @@ namespace RubiniteAP
 
             if (_shopLocationIds.Count > 0)
             {
-                Client.RequestLocationScouts(_shopLocationIds.Values);
-                AddLog("Requested scouts for " + _shopLocationIds.Count + " shop slots.");
+                Client.RequestLocationScoutsWhenReady(_shopLocationIds.Values);
+                AddLog("Queued scouts for " + _shopLocationIds.Count + " shop slots (waiting for DataPackage).");
             }
 
             _skillTreeLocationIds.Clear();
@@ -2162,6 +2163,19 @@ namespace RubiniteAP
                 }
             }
             return null;
+        }
+
+        private void OnDataPackageReady()
+        {
+            if (!ApRunActive) return;
+
+            // DataPackage just arrived. Re-scout shop slots so previously
+            // unnamed cross-game items get their real names.
+            if (_shopLocationIds.Count > 0)
+            {
+                Client.RequestLocationScouts(_shopLocationIds.Values);
+                AddLog("Re-scouting " + _shopLocationIds.Count + " shop slots after DataPackage arrived.");
+            }
         }
     }
 
