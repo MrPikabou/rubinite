@@ -96,23 +96,23 @@ SKILLS = [
     ("2-1", "Dart Charge Accelerator"),
     ("2-2", "Rolling Recovery"),
     ("2-3", "Explosive Strike"),
-    ("2-4", "Pureblood Heart"),
+    ("2-4", "Enhanced Power"),                  # was Pureblood Heart
     ("2-5", "Sunder Slash - Enhanced"),
     ("2-6", "Enhanced Strike"),
-    ("2-7", "Enhanced Heal"),
+    ("2-7", "Enhanced Power"),                  # was Enhanced Heal
     ("3-1", "Enhanced Darts"),
     ("3-2", "Blood-Tipped Strike"),
-    ("3-3", "Pureblood Heart"),
+    ("3-3", "Enhanced Power"),                  # was Pureblood Heart
     ("3-4", "Enhanced Strike"),
-    ("3-5", "Enhanced Heal"),
+    ("3-5", "Enhanced Power"),                  # was Enhanced Heal
     ("3-6", "Critical Strike - Enhanced"),
     ("3-7", "Enhanced Slash"),
-    ("4-1", "Pureblood Heart"),
+    ("4-1", "Enhanced Power"),                  # was Pureblood Heart
     ("4-2", "Blood-Tipped Strike - Enhanced"),
-    ("4-3", "Enhanced Heal"),
+    ("4-3", "Enhanced Power"),                  # was Enhanced Heal
     ("4-4", "Explosive Strike - Enhanced"),
     ("4-5", "Bloodblade Strike - Enhanced"),
-    ("4-6", "Pureblood Heart"),
+    ("4-6", "Enhanced Power"),                  # was Pureblood Heart
 ]
 
 
