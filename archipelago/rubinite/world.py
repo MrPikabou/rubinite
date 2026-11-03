@@ -89,6 +89,7 @@ class RubiniteWorld(World):
                     locations.LOCATION_NAME_TO_ID[data.skill_tree_location_name(tree_id, title)]
                 for tree_id, title in data.SKILLS
             },
+            "skill_price_mode": self.options.skill_price_mode.current_key,
             "skill_prices": self._skill_prices,
             "filler_items": [
                 {"name": name, "dust": dust, "icon": icon}
@@ -126,7 +127,7 @@ class RubiniteWorld(World):
             if boss[0] not in self._starting_boss_keys
             and data.sigil_for_boss_key_or_fallback(boss[0]) is not None
         )
-        shop_expansion_items = len(self._shop_groups)
+        shop_expansion_items = max(0, len(self._shop_groups) - self.options.starting_shop_groups.value)
         total_progression = sigil_items + shop_expansion_items
 
         if total_progression > total_locations:
