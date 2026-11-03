@@ -23,3 +23,6 @@ archipelago/*.txt
 .idea/
 *.user
 *.suo
+
+# other
+*.txt
