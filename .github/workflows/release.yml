@@ -64,13 +64,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       # --- 4. Build the C# DLL ---
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+      #- name: Setup .NET
+      #  uses: actions/setup-dotnet@v4
+      #  with:
+      #    dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Build RubiniteAP DLL
-        run: dotnet build ${{ env.CSPROJ }} -c Release -o ${{ github.workspace }}/dist
+      #- name: Build RubiniteAP DLL
+      #  run: dotnet build ${{ env.CSPROJ }} -c Release -o ${{ github.workspace }}/dist
 
       # --- 5. Collect all artifacts into dist/ ---
       - name: Collect all release artifacts
