@@ -107,6 +107,7 @@ class RubiniteWorld(World):
             "dust_multiplier": self.options.boss_dust_multiplier.value,
             "enable_dark_ruby": self.options.enable_dark_ruby.value,
             "dark_ruby_grading": data.DARK_RUBY_GRADING,
+            "goal_boss_kills_required": self.options.goal_boss_kills_required.value,
         }
     
     def generate_early(self) -> None:
@@ -122,6 +123,17 @@ class RubiniteWorld(World):
             raise OptionError(
                 f"Goal boss '{goal_key}' is not in this seed's active bosses. "
                 f"This indicates an options.yaml / logic mismatch."
+            )
+        
+        goal_kills = self.options.goal_boss_kills_required.value
+        active_boss_count = len(self.active_bosses)
+        max_possible_kills = active_boss_count - 1
+
+        if goal_kills > max_possible_kills:
+            raise OptionError(
+                f"GoalBossKillsRequired ({goal_kills}) exceeds the maximum possible number "
+                f"of other bosses in this seed ({max_possible_kills}). "
+                f"Either reduce the required kills or enable more bosses (e.g., Dark Ruby)."
             )
 
         self._boss_scene_map = self._compute_boss_scene_map()
@@ -208,7 +220,7 @@ class RubiniteWorld(World):
         candidates = [key for key in all_keys if key not in goal_portals]
 
         count = max(1, min(count, len(candidates)))
-        if self.options.starting_boss_selection.value == self.options.starting_boss_selection.option_random:
+        if self.options.starting_boss_selection.value == self.options.starting_boss_selection.option_randomized:
             return set(self.random.sample(candidates, count))
         return set(candidates[:count])
 

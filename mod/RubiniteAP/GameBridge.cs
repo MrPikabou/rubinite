@@ -20,6 +20,7 @@ namespace RubiniteAP
 
         public readonly ApState State;
         public readonly ApClient Client;
+        private InGameHud _inGameHud;
 
         public bool ApRunActive;
         public string StatusMessage = "Not connected.";
@@ -97,6 +98,10 @@ namespace RubiniteAP
         private bool _startingRun;
         private int _messageCount;
         private string _goalBossKey = "Witch2";
+        public string GoalBossKey => _goalBossKey;
+        private int _goalBossKillsRequired = 0;
+        public int GoalBossKillsRequired => _goalBossKillsRequired;
+        public int CurrentBossKillCount => CountDistinctBossKills();
 
         private string _lastLoadedLevel = null;
         private string _lastPortalLevel = null;
@@ -426,6 +431,10 @@ namespace RubiniteAP
                 AddLog("Goal boss: " + _goalBossKey);
             }
 
+            _goalBossKillsRequired = info.SlotData?["goal_boss_kills_required"]?.Value<int>() ?? 0;
+            if (_goalBossKillsRequired > 0)
+                AddLog($"Goal boss gate: need {_goalBossKillsRequired} different boss kills.");
+
             _enabledChecks.Clear();
             if (info.SlotData?["enabled_checks"] is JArray enabledArray)
             {
@@ -515,6 +524,17 @@ namespace RubiniteAP
                 ApplyRuntime(_needsFullLock);
 
             _needsFullLock = false;
+        }
+
+        private int CountDistinctBossKills()
+        {
+            int count = 0;
+            foreach (var boss in GameData.Bosses)
+            {
+                if (boss.Key == _goalBossKey) continue;
+                if (State.HasChecked(boss.LocationBase)) count++;
+            }
+            return count;
         }
 
         private void OnLocationScouted(long locationId, long itemId, int playerId, string serverName, int flags)
@@ -1040,6 +1060,31 @@ namespace RubiniteAP
                 }
             }
 
+            // Lazy-spawn the in-game HUD once the game world is ready
+            if (_inGameHud == null)
+            {
+                try
+                {
+                    var core = GetGamePlayCore();
+                    if (core != null && core.player != null)
+                    {
+                        var hudGo = new GameObject("AP_InGameHud_Host");
+                        UnityEngine.Object.DontDestroyOnLoad(hudGo);
+                        _inGameHud = hudGo.AddComponent<InGameHud>();
+                        _inGameHud.Initialize(this);
+                        AddLog("In-game HUD spawned.");
+                    }
+                }
+                catch (System.Exception ex) { AddLog("HUD spawn failed: " + ex.Message); }
+            }
+
+            // F7 — Toggle the in-game HUD
+            if (Input.GetKeyDown(KeyCode.F7) && _inGameHud != null)
+            {
+                _inGameHud.Toggle();
+                AddLog($"In-game HUD: {(_inGameHud.IsUserEnabled ? "ON" : "OFF")}");
+            }
+
 
 
 
@@ -1064,6 +1109,15 @@ namespace RubiniteAP
                     _darkRubySkinApplied = false;
                     ApplySkinForColor(_previousSkinColor);
                 }
+            }
+
+            // F10 — HUD-Dauer umschalten: Timed <-> Permanent
+            if (Input.GetKeyDown(KeyCode.F10) && _inGameHud != null)
+            {
+                _inGameHud.DurationMode = _inGameHud.DurationMode == InGameHud.ToastDurationMode.Permanent
+                    ? InGameHud.ToastDurationMode.Timed
+                    : InGameHud.ToastDurationMode.Permanent;
+                AddLog($"HUD duration: {_inGameHud.DurationMode} (HoldTime={_inGameHud.HoldTime}s)");
             }
         }
 
@@ -1657,28 +1711,13 @@ namespace RubiniteAP
                     }
                 }
 
-                if (mappedData == null)
-                {
-                    AddLog($"RefreshPortals: FAIL - no LevelData for '{displayLevel}'");
-                    continue;
-                }
-
-                if (point.bossIcon == null)
-                {
-                    AddLog($"RefreshPortals: FAIL - '{portalLevel}' has null bossIcon");
-                    continue;
-                }
+                if (mappedData == null) continue;
+                if (point.bossIcon == null) continue;
 
                 var iconSprite = mappedData.bossIcon_ForChallengeArea ?? mappedData.bossIcon;
-                if (iconSprite == null)
-                {
-                    AddLog($"RefreshPortals: FAIL - '{displayLevel}' has no bossIcon_ForChallengeArea/bossIcon");
-                    continue;
-                }
+                if (iconSprite == null) continue;
 
-                string prevName = point.bossIcon.sprite != null ? point.bossIcon.sprite.name : "null";
                 point.bossIcon.sprite = iconSprite;
-                //AddLog($"RefreshPortals: '{portalLevel}' icon: '{prevName}' -> '{iconSprite.name}'");
 
                 if (point.bossStageImage != null)
                 {
@@ -1692,10 +1731,12 @@ namespace RubiniteAP
                     point.dustText.text = (mappedData.dustFinalStage + mappedData.dustFirstStage).ToString();
 
                 // 2. Lock state from the PORTAL'S own boss requirement.
-                //    ShouldBlockLoad uses portalLevel, so this must match it.
                 var portalBoss = GameData.FindByLevel(portalLevel);
                 if (portalBoss != null)
                 {
+                    // We ONLY check IsBossUnlocked here (which just checks for the Sigil).
+                    // We deliberately do NOT check the Goal Boss Kills here so the player
+                    // can enter the arena to get their checks!
                     var unlocked = IsBossUnlocked(portalBoss, portalLevel);
 
                     if (point.dialogueItem != null)
@@ -1858,11 +1899,20 @@ namespace RubiniteAP
 
             if (boss.Key == _goalBossKey && !State.GoalSent)
             {
-                State.GoalSent = true;
-                State.Save();
-                if (Client.IsConnected)
-                    Client.SendGoal();
-                AddLog("Goal complete: " + boss.Name + " defeated!");
+                int killed = CountDistinctBossKills();
+                
+                if (_goalBossKillsRequired <= 0 || killed >= _goalBossKillsRequired)
+                {
+                    State.GoalSent = true;
+                    State.Save();
+                    if (Client.IsConnected) Client.SendGoal();
+                    AddLog("Goal complete: " + boss.Name + " defeated!");
+                }
+                else
+                {
+                    AddLog($"Defeated goal boss, but only {killed}/{_goalBossKillsRequired} different bosses killed.");
+                    StatusMessage = $"{boss.Name} defeated! ({killed}/{_goalBossKillsRequired} bosses killed).";
+                }
             }
 
             // After a win, the next CA visit is a fresh portal pick.
@@ -2883,7 +2933,7 @@ namespace RubiniteAP
             }
         }
 
-        private Sprite FindSpriteByName(string name)
+        public Sprite FindSpriteByName(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
             if (_spriteByNameCache.TryGetValue(name, out var cached))
@@ -3160,6 +3210,55 @@ namespace RubiniteAP
             if (sr == null || sr.material == null) return;
             if (sr.material.name.StartsWith("HardcodedDarkRubyMaterial")) return;
             ApplyHardcodedSkinToRenderer(sr);
+        }
+
+        public string GetSlotName(int slot)
+        {
+            if (_playerNames.TryGetValue(slot, out var name) && !string.IsNullOrEmpty(name))
+                return name;
+
+            if (slot == _mySlot)
+            {
+                var configured = RubiniteAPPlugin.Instance?.Settings?.Slot?.Value;
+                if (!string.IsNullOrEmpty(configured)) return configured.Trim();
+                return "You";
+            }
+            return "Player " + slot;
+        }
+
+        public bool IsBossActive(string bossKey)
+        {
+            var boss = GameData.FindByKey(bossKey);
+            if (boss == null) return false;
+            if (bossKey == "DarkRuby" && !_enableDarkRuby) return false;
+
+            return _bossSlotInfoByLevel.ContainsKey(boss.Level);
+        }
+
+        internal bool IsBossUnlockedPublic(BossInfo boss)
+        {
+            // We ONLY check the Sigil here (IsBossUnlocked). 
+            // This determines if the portal icon is grayed out or not.
+            // The Goal Boss Kill requirement is handled separately in the tooltip text.
+            return IsBossUnlocked(boss, boss.Level);
+        }
+
+        public bool IsCheckEnabled(string levelName, int checkIndex)
+        {
+            // 0 = First, 1 = Nohit, 2 = Notalisman, 3 = Flawless, 4 = Rank
+            if (checkIndex == 0) return true;
+
+            if (!_bossEnabledChecks.TryGetValue(levelName, out var checks))
+                checks = _enabledChecks; // Fallback
+
+            switch (checkIndex)
+            {
+                case 1: return checks.Contains("nohit");
+                case 2: return checks.Contains("notalisman");
+                case 3: return checks.Contains("flawless");
+                case 4: return checks.Contains("rank");
+                default: return false;
+            }
         }
     }
 

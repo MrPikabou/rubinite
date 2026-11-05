@@ -24,6 +24,20 @@ class GoalBoss(Choice):
     default = 12
 
 
+class GoalBossKillsRequired(Range):
+    """
+    Number of different bosses that must be defeated before the goal boss can be accessed.
+
+    0 = You do not need to fight any bosses, to get to the goal boss, but you still need its Sigil.
+    Any other Number means the amount of bosses you need to kill, to get to the goal boss. 
+    Keep in mind that you still need the Sigil of your chosen goal boss!
+    """
+    display_name = "Goal Boss Kills Required"
+    range_start = 0
+    range_end = 13
+    default = 0
+
+
 class BossShuffle(Choice):
     """Shuffle which boss scene loads at each level entrance."""
     display_name = "Boss Shuffle"
@@ -193,6 +207,7 @@ class DeathLinkAmnesty(Range):
 class RubiniteOptions(PerGameCommonOptions):
     goal_boss: GoalBoss
     boss_shuffle: BossShuffle
+    goal_boss_kills_required: GoalBossKillsRequired
     enable_dark_ruby: EnableDarkRuby
     starting_boss_count: StartingBossCount
     starting_boss_selection: StartingBossSelection
@@ -221,6 +236,7 @@ class RubiniteWebWorld(WebWorld):
         OptionGroup("Goal & Progression", [
             GoalBoss,
             BossShuffle,
+            GoalBossKillsRequired,
             EnableDarkRuby,
             BossDustMultiplier,
             StartingBossCount,

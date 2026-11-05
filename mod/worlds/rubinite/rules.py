@@ -41,6 +41,26 @@ def set_all_rules(world: RubiniteWorld) -> None:
                     )
                 )
 
-    goal_key = world.get_goal_boss_key()
-    goal_name = next(name for key, name, _l, _s in world.active_bosses if key == goal_key)
-    world.set_completion_rule(CanReachRegion(goal_name))
+    def _goal_condition(state, world=world):
+        goal_key = world.get_goal_boss_key()
+        goal_name = next(
+            name for key, name, _l, _s in world.active_bosses if key == goal_key
+        )
+
+        if not state.can_reach(goal_name, "Region", world.player):
+            return False
+
+        required = world.options.goal_boss_kills_required.value
+        if required <= 0:
+            return True
+
+        reachable = 0
+        for key, name, _l, _s in world.active_bosses:
+            if key == goal_key:
+                continue
+            if state.can_reach(name, "Region", world.player):
+                reachable += 1
+        return reachable >= required
+
+
+    world.set_completion_rule(_goal_condition)
