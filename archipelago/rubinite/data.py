@@ -25,6 +25,7 @@ BOSSES = [
     ("Queen", "The Puppet Master", "QueenLevel", "Puppet Master Sigil"),
     ("Witch", "Alcina the Witch", "Witch_FirstRunLevel", "Witch Sigil"),
     ("Witch2", "Alcina, True Form", "WitchLevel", "Witch II Sigil"),
+    ("DarkRuby", "Dark Ruby", "DarkRubyLevel", "Shadow Sigil"),
 ]
 
 
@@ -41,6 +42,16 @@ BOSS_SIGIL_FALLBACK = {
 }
 
 GOAL_BOSS_LEVEL = "WitchLevel"
+
+
+RANKLESS_BOSSES = set()
+
+
+# TODO Balance Grading for Dark Ruby
+DARK_RUBY_GRADING = {
+    "grading_time": 10.0,                   # Base Time
+    "grading_scale": [5.0, 25.0, 50.0],     # Rank-Scalings for S = 15s, A = 35s, B = 60s, C = >60s added to Base Time
+}
 
 
 # Five checks per boss. Only the first clear may hold progression items; the four

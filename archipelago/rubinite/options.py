@@ -20,6 +20,7 @@ class GoalBoss(Choice):
     option_queen = 10
     option_witch = 11
     option_witch2 = 12
+    option_darkruby = 13
     default = 12
 
 
@@ -29,6 +30,12 @@ class BossShuffle(Choice):
     option_vanilla = 0
     option_shuffle = 1
     default = 0
+
+
+class EnableDarkRuby(Toggle):
+    """Enable the Dark Ruby Boss from Roy's Memory."""
+    display_name = "Enable Dark Ruby"
+    default = False
 
 
 class StartingBossCount(Range):
@@ -164,6 +171,7 @@ class PlayerColor(Choice):
     option_white = 7
     option_pink = 8
     option_turquoise = 9
+    option_darkruby = 10
     default = 0
 
 
@@ -185,6 +193,7 @@ class DeathLinkAmnesty(Range):
 class RubiniteOptions(PerGameCommonOptions):
     goal_boss: GoalBoss
     boss_shuffle: BossShuffle
+    enable_dark_ruby: EnableDarkRuby
     starting_boss_count: StartingBossCount
     starting_boss_selection: StartingBossSelection
     boss_dust_multiplier: BossDustMultiplier
@@ -212,6 +221,7 @@ class RubiniteWebWorld(WebWorld):
         OptionGroup("Goal & Progression", [
             GoalBoss,
             BossShuffle,
+            EnableDarkRuby,
             BossDustMultiplier,
             StartingBossCount,
             StartingBossSelection,

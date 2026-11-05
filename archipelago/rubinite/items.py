@@ -28,6 +28,7 @@ SIGIL_IDS = {
     "Puppet Master Sigil": data.SIGIL_ITEM_BASE + 10,  # Queen
     "Witch Sigil":         data.SIGIL_ITEM_BASE + 11,  # Witch
     "Witch II Sigil":      data.SIGIL_ITEM_BASE + 12,  # Witch2
+    "Shadow Sigil":        data.SIGIL_ITEM_BASE + 13,  # Dark Ruby
 }
 
 
@@ -74,7 +75,7 @@ def get_random_filler_item_name(world: RubiniteWorld) -> str:
 
 def create_all_items(world: RubiniteWorld) -> None:
     itempool: list[Item] = []
-    for key, _name, _level, _vanilla_sigil in data.BOSSES:
+    for key, _name, _level, _vanilla_sigil in world.active_bosses:
         if key in world._starting_boss_keys:
             continue
         sigil = data.sigil_for_boss_key_or_fallback(key)

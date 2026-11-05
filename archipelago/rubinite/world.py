@@ -7,6 +7,8 @@ for the ten bosses that are not available at the start.
 
 from __future__ import annotations
 
+from Options import OptionError
+
 from collections.abc import Mapping
 from typing import Any
 
@@ -48,10 +50,14 @@ class RubiniteWorld(World):
         enabled_slugs = [slug for _suffix, slug in enabled_checks]
 
         boss_data = []
-        for key, name, level, _sigil in data.BOSSES:
+        for key, name, level, _sigil in self.active_bosses:
+            boss_checks = enabled_checks
+            if key in data.RANKLESS_BOSSES:
+                boss_checks = [c for c in enabled_checks if c[1] != "rank"]
+
             location_ids = {
                 slug: locations.LOCATION_NAME_TO_ID[data.location_name(name, suffix)]
-                for suffix, slug in enabled_checks
+                for suffix, slug in boss_checks
             }
             is_starting = key in self._starting_boss_keys
             boss_data.append(
@@ -99,9 +105,25 @@ class RubiniteWorld(World):
             "death_link": self.options.death_link.value,
             "death_link_amnesty": self.options.death_link_amnesty.value,
             "dust_multiplier": self.options.boss_dust_multiplier.value,
+            "enable_dark_ruby": self.options.enable_dark_ruby.value,
+            "dark_ruby_grading": data.DARK_RUBY_GRADING,
         }
     
     def generate_early(self) -> None:
+        self.active_bosses = [
+            b for b in data.BOSSES
+            if b[0] != "DarkRuby" or self.options.enable_dark_ruby.value
+        ]
+
+        # Sanity: the picked goal boss must exist in this seed's active bosses.
+        goal_key = self.get_goal_boss_key()
+        active_keys = {key for key, _n, _l, _s in self.active_bosses}
+        if goal_key not in active_keys:
+            raise OptionError(
+                f"Goal boss '{goal_key}' is not in this seed's active bosses. "
+                f"This indicates an options.yaml / logic mismatch."
+            )
+
         self._boss_scene_map = self._compute_boss_scene_map()
         self._starting_boss_keys = self._compute_starting_bosses()
         self._shop_groups = self._compute_shop_groups()
@@ -118,13 +140,13 @@ class RubiniteWorld(World):
         combinations that would otherwise crash inside the filler.
         """
         enabled_checks = self.get_enabled_check_types()
-        boss_locations = len(data.BOSSES) * len(enabled_checks)
+        boss_locations = len(self.active_bosses) * len(enabled_checks)
         shop_locations = len(data.TALISMANS)
         skill_tree_locations = len(data.SKILLS)
         total_locations = boss_locations + shop_locations + skill_tree_locations
 
         sigil_items = sum(
-            1 for boss in data.BOSSES
+            1 for boss in self.active_bosses
             if boss[0] not in self._starting_boss_keys
             and data.sigil_for_boss_key_or_fallback(boss[0]) is not None
         )
@@ -176,7 +198,7 @@ class RubiniteWorld(World):
     
     def _compute_starting_bosses(self) -> set[str]:
         count = self.options.starting_boss_count.value
-        all_keys = [key for key, _n, _l, _s in data.BOSSES]
+        all_keys = [key for key, _n, _l, _s in self.active_bosses]
         goal_key = self.get_goal_boss_key()
         goal_scene = data.level_for_boss_key(goal_key)
         goal_portals = {
@@ -191,7 +213,7 @@ class RubiniteWorld(World):
         return set(candidates[:count])
 
     def _compute_boss_scene_map(self) -> dict[str, str]:
-        arenas = [level for _k, _n, level, _s in data.BOSSES]
+        arenas = [level for _k, _n, level, _s in self.active_bosses]
         if self.options.boss_shuffle.value == self.options.boss_shuffle.option_vanilla:
             return {a: a for a in arenas}
         shuffled = arenas.copy()
@@ -224,7 +246,7 @@ class RubiniteWorld(World):
     def get_goal_boss_key(self) -> str:
         """Provides the boss key that must be defeated."""
         value = self.options.goal_boss.value
-        # Convert choice value in Key Value: 0 -> "Beast", 12 -> "Witch2"
+        # Must match the list used in generate_early's DarkRuby validation.
         keys = [key for key, _n, _l, _s in data.BOSSES]
         if 0 <= value < len(keys):
             return keys[value]

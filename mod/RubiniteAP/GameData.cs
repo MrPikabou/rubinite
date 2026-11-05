@@ -43,6 +43,7 @@ namespace RubiniteAP
             new BossInfo("Queen",       "The Puppet Master",   "QueenLevel",          "Puppet Master Sigil", false, 71050),
             new BossInfo("Witch",       "Alcina the Witch",    "Witch_FirstRunLevel", "Witch Sigil",         false, 71055),
             new BossInfo("Witch2",      "Alcina, True Form",   "WitchLevel",          "Witch II Sigil",      false, 71060),
+            new BossInfo("DarkRuby",    "Dark Ruby",           "DarkRubyLevel",       "Shadow Sigil",        false, 71065),
         };
 
         // First-tier skills stay unlocked so the run starts with a usable kit.

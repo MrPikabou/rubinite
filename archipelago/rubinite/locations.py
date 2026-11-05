@@ -40,9 +40,13 @@ class RubiniteLocation(Location):
 
 def create_all_locations(world: RubiniteWorld) -> None:
     enabled_checks = world.get_enabled_check_types()
-    for _key, boss_name, _level, _sigil in data.BOSSES:
+    for _key, boss_name, _level, _sigil in world.active_bosses:
+        boss_checks = enabled_checks
+        if _key in data.RANKLESS_BOSSES:
+            boss_checks = [c for c in enabled_checks if c[1] != "rank"]
+
         region = world.get_region(boss_name)
-        for suffix, _slug in enabled_checks:
+        for suffix, _slug in boss_checks:
             name = data.location_name(boss_name, suffix)
             region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
 
@@ -61,7 +65,7 @@ def create_all_locations(world: RubiniteWorld) -> None:
         )
 
     goal_key = world.get_goal_boss_key()
-    goal_boss_name = next(name for key, name, _l, _s in data.BOSSES if key == goal_key)
+    goal_boss_name = next(name for key, name, _l, _s in world.active_bosses if key == goal_key)
     goal_region = world.get_region(goal_boss_name)
     goal_region.add_event(
         f"{goal_boss_name} Defeated",

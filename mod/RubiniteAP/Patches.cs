@@ -2,6 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
+using Cinemachine;
+using Game.Level;
 using PugTool.Unity.Singleton;
 using PugTool.Unity.StringList;
 
@@ -50,15 +52,62 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(ApplicationCore), "LoadLevel")]
     internal static class LoadLevelPatch
     {
+        private static readonly HashSet<string> StoryScenes = new HashSet<string>
+        {
+            "MasterSceneCamp", "QueenSceneCamp", "BedRoom", "WhiteRoom",
+            "BloodSea", "BadWichiwi", "FirstRunEnding_AllIsDream",
+            "Prologue", "Intro", "NamelessChurch"
+        };
+
         private static bool Prefix(ref string levelName)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive)
                 return true;
-            
+
+            if (StoryScenes.Contains(levelName) || levelName.StartsWith("MasterSceneCamp"))
+            {
+                if (bridge.LastPortalLevel == "DarkRubyLevel" || bridge.LastPortalLevel == "DarkRuby")
+                {
+                    if (!bridge.DarkRubyCompleted)
+                    {
+                        LevelManager darkRubyMgr = null;
+                        foreach (var mgr in Resources.FindObjectsOfTypeAll<LevelManager>())
+                        {
+                            if (mgr?.gameObject == null || !mgr.gameObject.scene.IsValid()) continue;
+                            if (mgr.levelData?.DisplayName == "DarkRubyLevel") { darkRubyMgr = mgr; break; }
+                        }
+
+                        if (darkRubyMgr != null && bridge.IsPlayerAlive())
+                        {
+                            bridge.AddLog("Dark Ruby: opening ChallengeWinMenu instead of story scene");
+                            bridge.HandleLevelCompleted(darkRubyMgr);
+                            bridge.DarkRubyCompleted = true;
+
+                            try
+                            {
+                                var winMenu = GamePlayCore.Instance.challengeWinMenu;
+                                if (winMenu != null)
+                                {
+                                    bridge.ClearPendingPodiumClick();
+                                    MenuCore.Instance.EnterMenu(winMenu);
+                                    return false;
+                                }
+                                bridge.AddLog("WARNING: challengeWinMenu is null — falling back to CA");
+                            }
+                            catch (System.Exception ex) { bridge.AddLog("Failed to open win menu: " + ex.Message); }
+                        }
+                    }
+                }
+
+                bridge.ClearPendingPodiumClick();
+                bridge.AddLog($"Intercepted story scene '{levelName}', returning to ChallengeArea.");
+                levelName = "ChallengeArea";
+            }
+
             if (bridge.ShouldBlockLoad(levelName))
                 return false;
-            
+
             levelName = bridge.RemapBossScene(levelName);
 
             if (levelName == "ChallengeArea")
@@ -82,15 +131,35 @@ namespace RubiniteAP
                     bridge._originalDustValues.Clear();
                 }
 
-                if (!string.IsNullOrEmpty(bridge.LastPortalLevel)) 
+                if (!string.IsNullOrEmpty(bridge.LastPortalLevel))
                 {
                     GameSetting.Instance.playerLastLeaveScene.SetValue(bridge.LastPortalLevel, "RubiniteAP");
                     GameSetting.Instance.playerLastScene.SetValue(bridge.LastPortalLevel, "RubiniteAP");
                     bridge.AddLog("Spawn override CA: forced playerLastLeaveScene to '" + bridge.LastPortalLevel + "'");
                 }
             }
-        
+
             return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(MissionFailedMenu), "Enter")]
+    internal static class MissionFailedMenuEnterPatch
+    {
+        private static void Postfix(MissionFailedMenu __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var lm = GamePlayCore.Instance.levelManager;
+            if (lm?.levelData?.DisplayName != "DarkRubyLevel") return;
+
+            if (__instance.backToChallengeAreaButton != null)
+                __instance.backToChallengeAreaButton.gameObject.SetActive(true);
+            if (__instance.equipmentButton != null && !__instance.equipmentButton.gameObject.activeSelf)
+                __instance.equipmentButton.gameObject.SetActive(true);
+
+            bridge.AddLog("Dark Ruby: MissionFailedMenu buttons activated (timer resets on next attempt)");
         }
     }
 
@@ -137,6 +206,10 @@ namespace RubiniteAP
             if (__instance == null || __instance.gameObject.scene.name != "ChallengeArea") return;
             if (__instance.playerSpawnPoint == null) return;
 
+            try { bridge.SpawnDarkRubyPodium(); }
+            catch (System.Exception ex) { bridge.AddLog("SpawnDarkRubyPodium failed: " + ex.Message); }
+            bridge.SpawnPrefixSucceeded = false;
+
             var portalLevel = bridge.LastPortalLevel;
             if (string.IsNullOrEmpty(portalLevel)) return;
 
@@ -151,6 +224,7 @@ namespace RubiniteAP
                     // Keep the Z from the spawn point to not break 2D sorting
                     targetPos.z = __instance.playerSpawnPoint.position.z;
                     __instance.playerSpawnPoint.position = targetPos;
+                    bridge.SpawnPrefixSucceeded = true;
                     bridge.AddLog("SpawnPrefix: moved playerSpawnPoint to '" + portalLevel + "'");
                     return;
                 }
@@ -164,42 +238,79 @@ namespace RubiniteAP
             if (bridge == null || !bridge.ApRunActive) return;
             if (__instance == null) return;
 
-            var sceneName = __instance.gameObject.scene.name;
-            if (sceneName == "ChallengeArea")
+            if (__instance.gameObject.scene.name == "DarkRubyLevel" && __instance.levelTimer != null)
+            {
+                bool wasActive = __instance.levelTimer.gameObject.activeSelf;
+                if (!wasActive)
+                {
+                    __instance.levelTimer.gameObject.SetActive(true);
+                    bridge.AddLog("Dark Ruby: activated levelTimer");
+                }
+
+                __instance.levelTimer.timer = 0f;
+                __instance.levelTimer.SetStart();
+                __instance.levelTimer.Pause();
+                bridge.DarkRubyTimerPausedForCutscene = true;
+                bridge.AddLog("Dark Ruby: timer started paused (waiting for intro cutscene)");
+            }
+
+            if (__instance.gameObject.scene.name == "ChallengeArea")
             {
                 var portalLevel = bridge.LastPortalLevel;
-                if (!string.IsNullOrEmpty(portalLevel))
+                if (!string.IsNullOrEmpty(portalLevel) && !bridge.SpawnPrefixSucceeded)
                 {
                     GameSetting.Instance.playerLastScene.SetValue(portalLevel, "RubiniteAP");
                     GameSetting.Instance.playerLastLeaveScene.SetValue(portalLevel, "RubiniteAP");
                     
                     RubiniteAPPlugin.Instance.StartCoroutine(bridge.TeleportPlayerToPodium(portalLevel));
                 }
-            }   
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(LeaderboardMenu), "ShowLeaderboard")]
+    internal static class LeaderboardMenuShowLeaderboardPatch
+    {
+        private static bool Prefix(LevelData levelData)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return true;
+
+            if (levelData != null && levelData.DisplayName == "DarkRubyLevel")
+            {
+                bridge.AddLog("Blocked leaderboard for Dark Ruby (no leaderboard exists)");
+                return false;
+            }
+            return true;
         }
     }
 
     [HarmonyPatch(typeof(ChangeRubySkin), "ChangeSkin")]
     internal static class ChangeRubySkinPatch
     {
-        private static void Postfix()
+        private static void Postfix(ChangeRubySkin __instance)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge == null) return;
+            if (bridge == null || !bridge.IsHardcodedDarkRubyActive) return;
+            if (__instance?.spriteRenderer == null) return;
+            if (__instance.spriteRenderer.gameObject.name != "Girl") return;
+            if (__instance.isPortrait) return;
 
-            try
+            bool underPodium = false;
+            var t = __instance.spriteRenderer.transform;
+            while (t != null)
             {
-                var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
-                if (itemOverview != null && itemOverview.currentSkinIDFlag != null)
-                {
-                    string currentId = itemOverview.currentSkinIDFlag.GetValue();
-                    //bridge.AddLog("DEBUG SKIN ID: '" + currentId + "'");
-                }
+                if (t.GetComponent<ChallengeLevelPoint>() != null) { underPodium = true; break; }
+                t = t.parent;
             }
-            catch (System.Exception ex)
-            {
-                bridge.AddLog("Skin log failed: " + ex.Message);
-            }
+            if (underPodium) return;
+
+            if (__instance.spriteRenderer.material != null
+                && __instance.spriteRenderer.material.name.StartsWith("HardcodedDarkRubyMaterial"))
+                return;
+
+            try { bridge.ApplyHardcodedDarkRubySkinToRenderer(__instance.spriteRenderer); }
+            catch (System.Exception ex) { bridge.AddLog("Dark Ruby re-skin failed: " + ex.Message); }
         }
     }
 
@@ -891,6 +1002,215 @@ namespace RubiniteAP
                 
                 bridge.AddLog($"Multiplied dust pickup: +{baseAmount} -> +{baseAmount + extraAmount}");
             }
+        }
+    }
+
+    [HarmonyPatch(typeof(BasicEnemyCore), "Hurt")]
+    internal static class BasicEnemyCoreHurtPatch
+    {
+        private static void Prefix(BasicEnemyCore __instance, out bool __state)
+        {
+            __state = __instance.isDead;
+        }
+
+        private static void Postfix(BasicEnemyCore __instance, bool __state)
+        {
+            if (!(__instance is DarkRubyCore)) return;
+            if (__state) return;
+            if (!__instance.isDead) return;
+
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            if (bridge.DarkRubyDeathHandled) return;
+
+            var lm = GamePlayCore.Instance?.levelManager;
+
+            if (lm?.levelTimer != null)
+            {
+                lm.levelTimer.Pause();
+                bridge.DarkRubyTimerPausedForCutscene = true;
+                bridge.AddLog("Dark Ruby: timer paused (boss died)");
+            }
+
+            bridge.DarkRubyDeathHandled = true;
+            bridge.AddLog("Dark Ruby: death detected via Hurt() → scheduling Win Menu");
+            RubiniteAPPlugin.Instance.StartCoroutine(OpenWinMenuAfterDeath(bridge));
+        }
+
+        private static System.Collections.IEnumerator OpenWinMenuAfterDeath(GameBridge bridge)
+        {
+            yield return new WaitForSeconds(3.0f);
+
+            var lm = GamePlayCore.Instance.levelManager;
+            if (lm == null) yield break;
+
+            bridge.DarkRubyCompleted = true;
+            bridge.HandleLevelCompleted(lm);
+            bridge.ClearPendingPodiumClick();
+
+            try
+            {
+                var winMenu = GamePlayCore.Instance.challengeWinMenu;
+                if (winMenu != null)
+                {
+                    MenuCore.Instance.EnterMenu(winMenu);
+                    bridge.AddLog("Dark Ruby: ChallengeWinMenu opened immediately after death");
+                }
+                else
+                {
+                    bridge.AddLog("WARNING: challengeWinMenu is null");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                bridge.AddLog("Failed to open Win Menu: " + ex.Message);
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(CutSceneController), "StartCutScene")]
+    internal static class CutSceneControllerStartCutScenePatch
+    {
+        private static bool Prefix(CutSceneController __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return true;
+
+            var lm = GamePlayCore.Instance?.levelManager;
+            if (lm?.levelData?.DisplayName != "DarkRubyLevel") return true;
+
+            bridge.LastDarkRubyCutsceneName = __instance?.name;
+            bridge.AddLog($"Dark Ruby: CutScene startet '{__instance?.name}'");
+
+            bool bossDead = lm.boss != null && lm.boss.isDead;
+            bool winMenuOpen = MenuCore.Instance?.currentMenu == GamePlayCore.Instance?.challengeWinMenu;
+
+            if ((bossDead && bridge.DarkRubyDeathHandled) || winMenuOpen)
+            {
+                bridge.AddLog($"Dark Ruby: blocked CutSceneController.StartCutScene ('{__instance?.name}')");
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(TalkingChooseMenu), "SetChoices")]
+    internal static class TalkingChooseMenuSetChoicesPatch
+    {
+        private static void Postfix(TalkingChooseMenu __instance, string[] choicesText)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "ChallengeArea") return;
+            if (__instance.choices == null || choicesText == null) return;
+
+            var player = GamePlayCore.Instance?.player;
+            if (player == null) return;
+
+            bool nearDarkRuby = false;
+            foreach (var point in Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>())
+            {
+                if (point?.gameObject == null || !point.gameObject.scene.IsValid()) continue;
+                if (point.levelName?.displayName != "DarkRubyLevel") continue;
+                var dist = Vector2.Distance(player.transform.position, point.transform.position);
+                if (dist < 3.5f)
+                {
+                    nearDarkRuby = true;
+                    bridge.AddLog($"TalkingChooseMenu: near Dark Ruby (dist={dist:F2}), blocking Illusion");
+                    break;
+                }
+            }
+            if (!nearDarkRuby) return;
+
+            for (int i = 0; i < __instance.choices.Length; i++)
+            {
+                var choice = __instance.choices[i];
+                if (choice == null) continue;
+                string text = choicesText[i] ?? "";
+                if (text.Contains("Illusion") || text.Contains("Leaderboard") || text.Contains("幻影") || text.Contains("幻"))
+                {
+                    if (choice.button != null) choice.button.interactable = false;
+                    choice.gameObject.SetActive(false);
+                    bridge.AddLog($"TalkingChooseMenu: blocked Illusion [{i}] '{text}'");
+                }
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(GamePlayCore), "EnterCutSceneMode")]
+    internal static class EnterCutSceneModeTimerPausePatch
+    {
+        private static void Postfix()
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var lm = GamePlayCore.Instance?.levelManager;
+            if (lm?.levelData?.DisplayName != "DarkRubyLevel") return;
+            if (lm.levelTimer == null) return;
+
+            bridge.AddLog($"Dark Ruby: EnterCutSceneMode (current='{bridge.LastDarkRubyCutsceneName}')");
+
+            if (lm.levelTimer.timer > 0f || bridge.DarkRubyTimerPausedForCutscene)
+            {
+                lm.levelTimer.Pause();
+                bridge.DarkRubyTimerPausedForCutscene = true;
+                bridge.AddLog("Dark Ruby: timer paused (cutscene entered)");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(GamePlayCore), "ExitCutSceneMode")]
+    internal static class ExitCutSceneModeTimerResumePatch
+    {
+        private static void Postfix()
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            var lm = GamePlayCore.Instance?.levelManager;
+            if (lm?.levelData?.DisplayName != "DarkRubyLevel") return;
+
+            var introCutscenes = new[] { "EnterGameFromTitleCutscene", "EnterGameFromMasterLevelCutscene" };
+            if (System.Array.IndexOf(introCutscenes, bridge.LastDarkRubyCutsceneName) >= 0)
+            {
+                var player = GamePlayCore.Instance?.player;
+                if (player != null && lm.playerSpawnPoint != null)
+                {
+                    var pos = lm.playerSpawnPoint.position;
+                    pos.z = player.transform.position.z;
+                    player.transform.position = pos;
+                    bridge.AddLog($"Dark Ruby: teleported to bench (playerSpawnPoint) at ({pos.x:F2}, {pos.y:F2})");
+                }
+            }
+
+            if (!bridge.DarkRubyTimerPausedForCutscene) return;
+            if (lm.levelTimer == null) return;
+
+            bridge.AddLog($"Dark Ruby: ExitCutSceneMode (last='{bridge.LastDarkRubyCutsceneName}')");
+
+            if (lm.boss != null && lm.boss.isDead)
+            {
+                bridge.AddLog("Dark Ruby: timer stays paused (boss dead)");
+                return;
+            }
+
+            var introCutsceneNames = new HashSet<string>
+            {
+                "DarkRubyAppearCutscene",
+                "DarkRubyFirstAppearCutscene",
+            };
+
+            if (!introCutsceneNames.Contains(bridge.LastDarkRubyCutsceneName))
+            {
+                bridge.AddLog($"Dark Ruby: timer stays paused (last='{bridge.LastDarkRubyCutsceneName}', not a boss-intro cutscene)");
+                return;
+            }
+
+            lm.levelTimer.Resume();
+            bridge.DarkRubyTimerPausedForCutscene = false;
+            bridge.AddLog($"Dark Ruby: timer resumed after '{bridge.LastDarkRubyCutsceneName}'");
         }
     }
 }

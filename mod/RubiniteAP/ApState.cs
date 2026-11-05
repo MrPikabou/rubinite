@@ -20,6 +20,9 @@ namespace RubiniteAP
         public bool GoalSent;
         public bool ChallengeSaveInitialized;
 
+        public float LastDarkRubyFightTime;
+        public bool LastDarkRubyRankAchieved;
+
         [JsonIgnore]
         public string FilePath;
 

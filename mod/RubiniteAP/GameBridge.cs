@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using Cinemachine;
 using Newtonsoft.Json.Linq;
 using PugTool.Unity.Singleton;
 using PugTool.Unity.StringList;
@@ -24,6 +25,10 @@ namespace RubiniteAP
         public string StatusMessage = "Not connected.";
         public readonly List<string> LogLines = new List<string>();
 
+        private GameObject _cachedShopTerminal;
+        private GameObject _cachedDarkRubyPodium;
+        private string _lastCachedScene;
+
         private readonly Dictionary<long, string> _itemNames = new Dictionary<long, string>();
         private readonly Dictionary<int, string> _playerNames = new Dictionary<int, string>();
 
@@ -31,7 +36,7 @@ namespace RubiniteAP
         private readonly Dictionary<string, string> _skillItemByTreeId = new Dictionary<string, string>();
         private readonly Dictionary<string, string> _bossSceneMap = new Dictionary<string, string>();
         private readonly Dictionary<string, (string sigil, bool start)> _bossSlotInfoByLevel = new Dictionary<string, (string, bool)>();
-        private readonly Dictionary<string, Sprite> _bossSteleByLevel = new Dictionary<string, Sprite>();
+        private readonly Dictionary<string, HashSet<string>> _bossEnabledChecks = new();
 
         private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
@@ -42,6 +47,37 @@ namespace RubiniteAP
         private readonly Dictionary<string, long> _skillTreeLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _fillerDustValues = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _fillerIconNames = new Dictionary<string, string>();
+
+        public bool DarkRubyDeathHandled { get; set; }
+        public bool DarkRubyCompleted { get; set; }
+        public bool DarkRubyTimerPausedForCutscene { get; set; }
+        public float DarkRubyGradingTime { get; set; } = 60f;
+        public float[] DarkRubyGradingScale { get; set; } = new[] { 10f, 20f, 40f };
+        public string LastDarkRubyCutsceneName { get; set; }
+        private Sprite _darkRubyIcon;
+        private Sprite _darkRubyScenePic;
+        private static readonly (float tr, float tg, float tb, float ta,
+                         float nr, float ng, float nb, float na, float tol)[] DarkRubyColorSlots = new[]
+        {
+            (0.80f, 0.00f, 0.00f, 1f,  0.21f, 0.21f, 0.21f, 1f,  0.97f),
+            (0.58f, 0.06f, 0.06f, 1f,  0.14f, 0.14f, 0.14f, 1f,  0.97f),
+            (0.39f, 0.08f, 0.08f, 1f,  0.09f, 0.09f, 0.09f, 1f,  0.97f),
+            (0.99f, 0.56f, 0.56f, 1f,  0.57f, 0.57f, 0.57f, 1f,  0.97f),
+            (0.80f, 0.44f, 0.50f, 1f,  0.37f, 0.37f, 0.37f, 1f,  0.97f),
+            (0.15f, 0.09f, 0.07f, 1f,  0.10f, 0.10f, 0.10f, 1f,  0.97f),
+            (0.35f, 0.24f, 0.19f, 1f,  0.14f, 0.14f, 0.14f, 1f,  0.97f),
+            (0.49f, 0.35f, 0.29f, 1f,  0.16f, 0.16f, 0.16f, 1f,  0.97f),
+            (1.00f, 0.85f, 0.75f, 1f,  0.51f, 0.51f, 0.51f, 1f,  0.97f),
+            (0.99f, 0.99f, 0.98f, 1f,  0.48f, 0.48f, 0.48f, 1f,  0.18f),
+        };
+        private bool _darkRubyForceSkin;
+        private bool _darkRubySkinApplied;
+        private bool _enableDarkRuby;
+        private bool _isHardcodedDarkRubyActive = false;
+        public bool IsDarkRubySkinEnabled => _playerColorKey == "darkruby" || _darkRubyForceSkin;
+        public bool IsHardcodedDarkRubyActive => _isHardcodedDarkRubyActive;
+        private string _previousSkinColor = "red";
+        private SpriteRenderer _cachedGirlSr;
 
         private readonly Dictionary<string, Sprite> _customSpriteCache = new();
         private readonly Dictionary<string, Sprite> _spriteByNameCache = new();
@@ -65,6 +101,7 @@ namespace RubiniteAP
         private string _lastPortalLevel = null;
         public string LastPortalLevel => _lastPortalLevel;
         private string _podiumClickPending = null;
+        public bool SpawnPrefixSucceeded { get; set; }
 
         private int _requiredRankIndex = 0;
 
@@ -162,6 +199,7 @@ namespace RubiniteAP
             {
                 State.ResetForSlot(slot, info.SeedName);
                 _needsFullLock = true;
+                DarkRubyCompleted = false;
                 _receivedHistory.Clear();
                 _scoutedLocations.Clear();
             }
@@ -322,17 +360,36 @@ namespace RubiniteAP
             }
 
             _bossSlotInfoByLevel.Clear();
+            _bossEnabledChecks.Clear();
             if (info.SlotData?["bosses"] is JArray bossesArr)
             {
                 foreach (var bossToken in bossesArr)
                 {
                     var level = bossToken["level"]?.ToString();
                     if (string.IsNullOrEmpty(level)) continue;
-                    var sigil = bossToken["sigil"]?.ToString();   // null when starting
+                    var sigil = bossToken["sigil"]?.ToString();
                     var start = bossToken["start"]?.Value<bool>() ?? false;
                     _bossSlotInfoByLevel[level] = (sigil, start);
+
+                    var checks = new HashSet<string>();
+                    if (bossToken["locations"] is JObject locs)
+                        foreach (var p in locs.Properties())
+                            checks.Add(p.Name);
+                    _bossEnabledChecks[level] = checks;
                 }
                 AddLog("Boss slot info loaded (" + _bossSlotInfoByLevel.Count + " entries).");
+            }
+
+            if (info.SlotData?["dark_ruby_grading"] is JObject drg)
+            {
+                DarkRubyGradingTime = drg["grading_time"]?.Value<float>() ?? 60f;
+                if (drg["grading_scale"] is JArray scaleArr)
+                {
+                    var list = new List<float>();
+                    foreach (var s in scaleArr) list.Add(s.Value<float>());
+                    if (list.Count > 0) DarkRubyGradingScale = list.ToArray();
+                }
+                AddLog($"Dark Ruby grading: time={DarkRubyGradingTime}, scale=[{string.Join(", ", DarkRubyGradingScale)}]");
             }
 
             var rankFromSlot = info.SlotData?["required_rank"]?.Value<int>() ?? 0;
@@ -380,11 +437,15 @@ namespace RubiniteAP
             {
                 var boss = GameData.FindByLevel(levelName);
                 if (boss == null) continue;
+                var bossChecks = _bossEnabledChecks.TryGetValue(levelName, out var bc) 
+                    ? bc 
+                    : _enabledChecks;
+
                 trackerScoutTargets.Add(boss.LocationBase);
-                if (_enabledChecks.Contains("nohit"))      trackerScoutTargets.Add(boss.LocationBase + 1);
-                if (_enabledChecks.Contains("notalisman")) trackerScoutTargets.Add(boss.LocationBase + 2);
-                if (_enabledChecks.Contains("flawless"))   trackerScoutTargets.Add(boss.LocationBase + 3);
-                if (_enabledChecks.Contains("rank"))       trackerScoutTargets.Add(boss.LocationBase + 4);
+                if (bossChecks.Contains("nohit"))      trackerScoutTargets.Add(boss.LocationBase + 1);
+                if (bossChecks.Contains("notalisman")) trackerScoutTargets.Add(boss.LocationBase + 2);
+                if (bossChecks.Contains("flawless"))   trackerScoutTargets.Add(boss.LocationBase + 3);
+                if (bossChecks.Contains("rank"))       trackerScoutTargets.Add(boss.LocationBase + 4);
             }
             foreach (var loc in info.CheckedLocations)
                 trackerScoutTargets.Add(loc);
@@ -398,6 +459,10 @@ namespace RubiniteAP
             BossDustMultiplier = info.SlotData?["dust_multiplier"]?.Value<int>() ?? 1;
             if (BossDustMultiplier > 1)
                 AddLog("Boss Dust Multiplier enabled: x" + BossDustMultiplier);
+            
+            _enableDarkRuby = info.SlotData?["enable_dark_ruby"]?.Value<bool>() ?? false;
+            if (_enableDarkRuby)
+                AddLog("Dark Ruby boss enabled. Will spawn custom podium.");
 
             State.AddChecked(info.CheckedLocations);
             State.Save();
@@ -477,7 +542,6 @@ namespace RubiniteAP
 
             _scoutedShopItems[title] = display;
             _scoutedShopFlags[title] = flags;
-            // TODO AddLog("Scouted: '" + title + "' -> '" + display + "'");
 
             string trackerName;
             if (!string.IsNullOrEmpty(local))
@@ -831,6 +895,14 @@ namespace RubiniteAP
                 return;
 
             var sceneName = SceneManager.GetActiveScene().name;
+
+            if (sceneName != _lastCachedScene)
+            {
+                _lastCachedScene = sceneName;
+                _cachedShopTerminal = null;
+                _cachedDarkRubyPodium = null;
+                _cachedGirlSr = null;
+            }
             
             if (ApRunActive && DeathLinkActive && sceneName != "TitleMenu")
                 PollPlayerHpForDeathLink();
@@ -877,14 +949,36 @@ namespace RubiniteAP
                 }
 
                 // Re-spawn the shop whenever the CA was reloaded (e.g. after a boss fight)
-                if (GameObject.Find("AP_Shop_Terminal") == null)
+                if (_cachedShopTerminal == null)
                 {
                     SpawnShopObject();
-                    AddLog("Re-spawned Wichiwi AP Shop Terminal after scene reload.");
+                    _cachedShopTerminal = GameObject.Find("AP_Shop_Terminal");
+                    if (_cachedShopTerminal != null)
+                        AddLog("Re-spawned Wichiwi AP Shop Terminal after scene reload.");
                 }
 
+                // Re-spawn Dark Ruby Podium
+                if (_cachedDarkRubyPodium == null)
+                {
+                    // Only try if the Beast template still exists — avoids hundreds of
+                    // failed-spawn log lines per second when a template is missing.
+                    bool hasTemplate = false;
+                    foreach (var p in Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>())
+                    {
+                        if (p?.gameObject != null && p.gameObject.scene.IsValid()
+                            && p.levelName?.displayName == "BeastLevel") { hasTemplate = true; break; }
+                    }
+                    if (hasTemplate)
+                    {
+                        SpawnDarkRubyPodium();
+                        _cachedDarkRubyPodium = GameObject.Find("AP_DarkRuby_Podium");
+                        if (_cachedDarkRubyPodium != null)
+                            RefreshPortals();
+                    }
+                }
 
-                var shopObj = GameObject.Find("AP_Shop_Terminal");
+                var shopObj = _cachedShopTerminal;
+
                 if (shopObj != null)
                 {
                     var player = GetGamePlayCore()?.player;
@@ -918,17 +1012,42 @@ namespace RubiniteAP
                         }
                     }
                 }
+
+                if (_isHardcodedDarkRubyActive && ApRunActive)
+                {
+                    var girl = GetGirlSr();
+                    if (girl != null && (!_darkRubySkinApplied || girl.material == null 
+                        || !girl.material.name.StartsWith("HardcodedDarkRubyMaterial")))
+                    {
+                        ApplyHardcodedDarkRubySkin();
+                    }
+                }
             }
 
-            // --- F12 DEBUG: Scan all UI sprites in the scene ---
-            // TODO Debugging, delete later
-            if (Input.GetKeyDown(KeyCode.F10))
+
+
+
+
+
+
+
+            // F9 — Hardcoded Dark Ruby Skin togglen
+            if (Input.GetKeyDown(KeyCode.F9))
             {
-                AddLog("=== SCANNING DUST METHODS ===");
-                
-                // Method for Scanning ingame Assets
-                
-                AddLog("=== SCAN COMPLETE ===");
+                _isHardcodedDarkRubyActive = !_isHardcodedDarkRubyActive;
+
+                if (_isHardcodedDarkRubyActive)
+                {
+                    _previousSkinColor = _playerColorKey;
+                    AddLog("F9: Toggled Hardcoded Dark Ruby Skin ON");
+                    ApplyHardcodedDarkRubySkin();
+                }
+                else
+                {
+                    AddLog($"F9: Toggled Hardcoded Dark Ruby Skin OFF -> reverting to {_previousSkinColor}");
+                    _darkRubySkinApplied = false;
+                    ApplySkinForColor(_previousSkinColor);
+                }
             }
         }
 
@@ -1009,6 +1128,7 @@ namespace RubiniteAP
                     BackupChallengeSave();
                     DataSaver.currentSaveNumber = GameData.ChallengeSaveNumber;
                     ChallengeSave.RefreshFromAllNormalSaves();
+                    DarkRubyCompleted = false;
                     State.ChallengeSaveInitialized = true;
                     State.Save();
                     _flagsInitializedThisRun = false;
@@ -1060,8 +1180,10 @@ namespace RubiniteAP
                     _startingRun = false;
                     yield return new WaitForSeconds(0.4f);
                     ApplyRuntime(true);
-                    RefreshPortals();
                     SpawnShopObject();
+                    try { SpawnDarkRubyPodium(); }
+                    catch (System.Exception ex) { AddLog("SpawnDarkRubyPodium failed: " + ex.Message); }
+                    RefreshPortals();
                     AddLog("Archipelago run ready. Pick an unlocked boss portal.");
                     yield break;
                 }
@@ -1375,13 +1497,24 @@ namespace RubiniteAP
                 if (GameSetting.Instance != null)
                 {
                     // Apply the chosen AP Color
-                    string skinId = GetSkinIdForColor(_playerColorKey);
-                    if (GameSetting.Instance.rubySkinID != null)
-                        GameSetting.Instance.rubySkinID.SetValue(skinId, "RubiniteAP");
-                        
                     // This directly updates the player's visual appearance
-                    if (SingletonScriptableObject<ItemDataOverview>.Instance != null)
-                        SingletonScriptableObject<ItemDataOverview>.Instance.currentSkinIDFlag.SetValue(skinId, "RubiniteAP");
+                    if (_playerColorKey == "darkruby")
+                    {
+                        GameSetting.Instance.rubySkinID.SetValue(
+                            GetSkinIdForColor("red"), "RubiniteAP");
+                    }
+                    else
+                    {
+                        string skinId = GetSkinIdForColor(_playerColorKey);
+                        GameSetting.Instance.rubySkinID.SetValue(skinId, "RubiniteAP");
+                        if (SingletonScriptableObject<ItemDataOverview>.Instance != null)
+                            SingletonScriptableObject<ItemDataOverview>.Instance.currentSkinIDFlag.SetValue(skinId, "RubiniteAP");
+                    }
+                }
+
+                if (_playerColorKey == "darkruby")
+                {
+                    RubiniteAPPlugin.Instance.StartCoroutine(ApplyDarkRubySkinDelayed());
                 }
 
                 // Clear equipped talismans on start
@@ -1564,71 +1697,6 @@ namespace RubiniteAP
             }
         }
 
-        private Sprite FindBossSteleSprite(string bossKey)
-        {
-            var level = LevelForBossKey(bossKey);
-            if (string.IsNullOrEmpty(level)) return null;
-            return _bossSteleByLevel.TryGetValue(level, out var sprite) ? sprite : null;
-        }
-
-        private static SpriteRenderer FindBossSteleRendererInPoint(ChallengeLevelPoint point)
-        {
-            if (point == null) return null;
-            foreach (var sr in point.GetComponentsInChildren<SpriteRenderer>(true))
-            {
-                if (sr == null || sr.sprite == null) continue;
-                if (!sr.sprite.name.StartsWith("BossStele_")) continue;
-                if (sr.sprite.name == "BossStele_0") continue;
-                return sr;
-            }
-            return null;
-        }
-
-        private static Sprite FindBossIconInPoint(ChallengeLevelPoint point)
-            => FindBossSteleRendererInPoint(point)?.sprite;
-
-        private static string SigilToBossKey(string sigilItemName)
-        {
-            switch (sigilItemName)
-            {
-                case "Beast Sigil":         return "Beast";
-                case "Guardian Sigil":      return "Guardian";
-                case "Cult Sigil":          return "Cult";
-                case "Gravekeeper Sigil":   return "Gravekeeper";
-                case "Plaguebearer Sigil":  return "PlagueRoot";
-                case "Nestling Sigil":      return "Nestling";
-                case "Faye II Sigil":       return "Guardian2";
-                case "Ghost Sigil":         return "Ghost";
-                case "Hunter Sigil":        return "Master";
-                case "EyesTree Sigil":      return "EyesTree";
-                case "Puppet Master Sigil": return "Queen";
-                case "Witch Sigil":         return "Witch";
-                case "Witch II Sigil":      return "Witch2";
-                default:                    return null;
-            }
-        }
-
-        private static string LevelForBossKey(string bossKey)
-        {
-            switch (bossKey)
-            {
-                case "Beast":       return "BeastLevel";
-                case "Guardian":    return "GuardianLevel";
-                case "Cult":        return "CultLevel";
-                case "Gravekeeper": return "PlagueLevel";
-                case "PlagueRoot":  return "PlagueRootLevel";
-                case "Nestling":    return "NestlingLevel";
-                case "Guardian2":   return "GuardianLevel2";
-                case "Ghost":       return "GhostLevel";
-                case "Master":      return "MasterLevel";
-                case "EyesTree":    return "EyesTreeLevel";
-                case "Queen":       return "QueenLevel";
-                case "Witch":       return "Witch_FirstRunLevel";
-                case "Witch2":      return "WitchLevel";
-                default:            return null;
-            }
-        }
-
         private Sprite GetSkillIcon(SkillTreeData tree)
         {
             if (tree == null || string.IsNullOrEmpty(tree.DisplayName)) return null;
@@ -1682,13 +1750,25 @@ namespace RubiniteAP
         public void HandleLevelCompleted(LevelManager manager)
         {
             if (!ApRunActive || manager == null || manager.levelData == null)
+            {
+                AddLog($"HandleLevelCompleted: early return (ApRunActive={ApRunActive}, manager={manager != null}, levelData={manager?.levelData != null})");
                 return;
+            }
             if (DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
+            {
+                AddLog($"HandleLevelCompleted: early return (save number mismatch: {DataSaver.currentSaveNumber} != {GameData.ChallengeSaveNumber})");
                 return;
+            }
+
+            AddLog($"HandleLevelCompleted called: level='{manager.levelData.DisplayName}', hits={manager.Hits}");
 
             var boss = GameData.FindByLevel(manager.levelData.DisplayName);
             if (boss == null)
+            {
+                AddLog($"HandleLevelCompleted: FAIL - no boss found for level '{manager.levelData.DisplayName}'");
                 return;
+            }
+            AddLog($"HandleLevelCompleted: matched boss '{boss.Key}' (LocationBase={boss.LocationBase})");
 
             var core = GetGamePlayCore();
             var hits = manager.Hits;
@@ -1712,21 +1792,32 @@ namespace RubiniteAP
                 }
                 else
                 {
-                    var threshold = manager.levelData.gradingTime + manager.levelData.gradingScale[_requiredRankIndex];
+                    float threshold = manager.levelData.gradingTime;
+                    for (int j = 0; j <= _requiredRankIndex; j++)
+                        threshold += manager.levelData.gradingScale[j];
+
                     rankAchieved = manager.levelTimer.timer <= threshold;
                     AddLog($"Rank debug: req={_requiredRankIndex}, time={manager.levelTimer.timer:F1}, max={threshold:F1}");
                 }
             }
 
+            if (boss.Key == "DarkRuby")
+            {
+                State.LastDarkRubyFightTime = manager.levelTimer.timer;
+                State.LastDarkRubyRankAchieved = rankAchieved;
+                State.Save();
+                AddLog($"Dark Ruby saved time: {State.LastDarkRubyFightTime:F1}s (rank={_requiredRankIndex})");
+            }
+
+            var bossChecks = _bossEnabledChecks.TryGetValue(boss.Level, out var bc) 
+                ? bc 
+                : _enabledChecks;
+
             var ids = new List<long> { boss.LocationBase };
-            if (noHit && _enabledChecks.Contains("nohit"))
-                ids.Add(boss.LocationBase + 1);
-            if (noTalisman && _enabledChecks.Contains("notalisman"))
-                ids.Add(boss.LocationBase + 2);
-            if (flawless && _enabledChecks.Contains("flawless"))
-                ids.Add(boss.LocationBase + 3);
-            if (rankAchieved && _enabledChecks.Contains("rank"))
-                ids.Add(boss.LocationBase + 4);
+            if (noHit      && bossChecks.Contains("nohit"))      ids.Add(boss.LocationBase + 1);
+            if (noTalisman && bossChecks.Contains("notalisman")) ids.Add(boss.LocationBase + 2);
+            if (flawless   && bossChecks.Contains("flawless"))   ids.Add(boss.LocationBase + 3);
+            if (rankAchieved && bossChecks.Contains("rank"))     ids.Add(boss.LocationBase + 4);
 
             var newIds = new List<long>();
             foreach (var id in ids)
@@ -1814,10 +1905,22 @@ namespace RubiniteAP
                 _podiumClickPending = null;
                 _lastLoadedLevel = null;
                 _lastPortalLevel = null;
+
+                if (levelName == "DarkRubyLevel" || levelName == "DarkRuby")
+                {
+                    DarkRubyResetFlags();
+                    AddLog("Dark Ruby: reset completion flag (podium click)");
+                }
             }
             else if (!string.IsNullOrEmpty(_lastLoadedLevel) && levelName == _lastLoadedLevel)
             {
                 AddLog("Remap: retry of '" + levelName + "' — no remap");
+
+                if (levelName == "DarkRubyLevel" || levelName == "DarkRuby")
+                {
+                    DarkRubyResetFlags();
+                    AddLog("Dark Ruby: reset completion flag (retry)");
+                }
                 return levelName;
             }
 
@@ -1826,11 +1929,26 @@ namespace RubiniteAP
                 _lastPortalLevel = levelName;
                 _lastLoadedLevel = mapped;
                 AddLog("Remap: '" + levelName + "' -> '" + mapped + "'");
+
+                if (mapped == "DarkRubyLevel" || mapped == "DarkRuby")
+                {
+                    DarkRubyResetFlags();
+                    AddLog("Dark Ruby: reset completion flag (shuffle map)");
+                }
+
                 return mapped;
             }
 
             AddLog("Remap: '" + levelName + "' has no mapping (pass through)");
             return levelName;
+        }
+
+        private void DarkRubyResetFlags()
+        {
+            DarkRubyDeathHandled = false;
+            DarkRubyCompleted = false;
+            DarkRubyTimerPausedForCutscene = false;
+            LastDarkRubyCutsceneName = null;
         }
 
         public IEnumerator TeleportPlayerToPodium(string portalLevel)
@@ -2028,6 +2146,13 @@ namespace RubiniteAP
                 return cached;
 
             string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
+
+            if (!System.IO.File.Exists(path))
+            {
+                AddLog($"LoadCustomSprite: file NOT FOUND '{path}'");
+                return null;
+            }
+
             if (System.IO.File.Exists(path))
             {
                 try
@@ -2274,6 +2399,249 @@ namespace RubiniteAP
             AddLog("Spawned Wichiwi AP Shop Terminal.");
         }
 
+        public void SpawnDarkRubyPodium()
+        {
+            if (!_enableDarkRuby) return;
+            if (GameObject.Find("AP_DarkRuby_Podium") != null) return;
+
+            if (_darkRubyIcon == null)
+            {
+                _darkRubyIcon = LoadCustomSprite("dark_ruby_icon.png", 0.7f);
+                AddLog(_darkRubyIcon != null
+                    ? "Dark Ruby: loaded dark_ruby_icon.png"
+                    : "Dark Ruby: dark_ruby_icon.png NOT loaded (file missing)");
+            }
+            if (_darkRubyScenePic == null)
+            {
+                _darkRubyScenePic = LoadCustomSprite("dark_ruby_scene.png", 0f);
+                AddLog(_darkRubyScenePic != null
+                    ? "Dark Ruby: loaded dark_ruby_scene.png"
+                    : "Dark Ruby: dark_ruby_scene.png NOT loaded (file missing)");
+            }
+
+            var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+            if (overview == null) return;
+
+            LevelData darkRubyData = overview.FindUniqueId("DarkRubyLevel");
+            if (darkRubyData == null)
+            {
+                foreach (var ld in overview.GetAllData())
+                {
+                    if (ld != null && ld.DisplayName == "DarkRubyLevel") { darkRubyData = ld; break; }
+                }
+            }
+
+            if (darkRubyData == null)
+            {
+                AddLog("WARNING: Could not find LevelData for DarkRubyLevel (neither UniqueId nor DisplayName match)");
+            }
+            else
+            {
+                AddLog($"Dark Ruby: found LevelData (DisplayName='{darkRubyData.DisplayName}')");
+
+                if (_darkRubyIcon != null)
+                {
+                    darkRubyData.bossIcon = _darkRubyIcon;
+                    darkRubyData.bossIcon_ForChallengeArea = _darkRubyIcon;
+                    AddLog("Dark Ruby: applied custom icon to LevelData");
+                }
+                else
+                {
+                    var beastData = overview.FindUniqueId("BeastLevel");
+                    if (beastData?.bossIcon != null)
+                    {
+                        darkRubyData.bossIcon = beastData.bossIcon;
+                        darkRubyData.bossIcon_ForChallengeArea = beastData.bossIcon_ForChallengeArea ?? beastData.bossIcon;
+                        AddLog("Dark Ruby: using Beast icon as fallback");
+                    }
+                }
+
+                if (_darkRubyScenePic != null)
+                {
+                    darkRubyData.MapSelect_ScenePic = _darkRubyScenePic;
+                    darkRubyData.differentImageForChallengeArea = true;
+                    darkRubyData.ScenePic_ForChallengeArea = _darkRubyScenePic;
+                    AddLog("Dark Ruby: applied custom scene pic to LevelData");
+                }
+                else
+                {
+                    var beastData = overview.FindUniqueId("BeastLevel");
+                    if (beastData?.MapSelect_ScenePic != null)
+                    {
+                        darkRubyData.MapSelect_ScenePic = beastData.MapSelect_ScenePic;
+                        AddLog("Dark Ruby: using Beast scene pic as fallback");
+                    }
+                }
+
+                darkRubyData.gradingTime = DarkRubyGradingTime;
+                darkRubyData.gradingScale = (float[])DarkRubyGradingScale.Clone();
+                AddLog($"Dark Ruby: set grading (time={darkRubyData.gradingTime}, scale=[{string.Join(", ", darkRubyData.gradingScale)}])");
+
+                AddLog($"Dark Ruby setStringsWhenLevelCompleted: {darkRubyData.setStringsWhenLevelCompleted?.Count ?? 0} entries");
+                if (darkRubyData.setStringsWhenLevelCompleted != null)
+                {
+                    foreach (var s in darkRubyData.setStringsWhenLevelCompleted)
+                        AddLog($"  {s.gameFlag?.name} = '{s.value}'");
+                }
+            
+            }
+
+            if (overview.allSceneName == null) return;
+            LevelName darkRubyLevelName = overview.allSceneName.DarkRuby;
+            if (darkRubyLevelName == null)
+            {
+                AddLog("WARNING: Could not find DarkRuby LevelName in allSceneName!");
+                return;
+            }
+
+            ChallengeLevelPoint template = null;
+            foreach (var p in Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>())
+            {
+                if (p?.gameObject != null && p.gameObject.scene.IsValid() && p.levelName?.displayName == "BeastLevel")
+                {
+                    template = p;
+                    break;
+                }
+            }
+
+            if (template == null)
+            {
+                AddLog("WARNING: Could not find a template podium for Dark Ruby!");
+                return;
+            }
+
+            GameObject newObj = GameObject.Instantiate(template.gameObject);
+            newObj.name = "AP_DarkRuby_Podium";
+            //newObj.transform.position = template.transform.position + new Vector3(11f, -17.33f, 0f); # near Master
+            newObj.transform.position = template.transform.position + new Vector3(10.75f, -25.45f, 0f);
+
+            var newPoint = newObj.GetComponent<ChallengeLevelPoint>();
+            if (newPoint != null)
+            {
+                newPoint.levelName = darkRubyLevelName;
+                if (newPoint.onEnableLoadLevel != null)
+                    newPoint.onEnableLoadLevel.levelName = darkRubyLevelName;
+                if (newPoint.lastSceneCondition != null)
+                    newPoint.lastSceneCondition.levelName = darkRubyLevelName;
+                
+                if (darkRubyData != null)
+                {
+                    newPoint.levelData = darkRubyData;
+
+                    if (newPoint.bossStageImage != null)
+                    {
+                        if (darkRubyData.differentImageForChallengeArea && darkRubyData.ScenePic_ForChallengeArea != null)
+                            newPoint.bossStageImage.sprite = darkRubyData.ScenePic_ForChallengeArea;
+                        else if (darkRubyData.MapSelect_ScenePic != null)
+                            newPoint.bossStageImage.sprite = darkRubyData.MapSelect_ScenePic;
+                    }
+
+                    if (newPoint.bossIcon != null)
+                    {
+                        var icon = darkRubyData.bossIcon_ForChallengeArea ?? darkRubyData.bossIcon;
+                        if (icon != null) newPoint.bossIcon.sprite = icon;
+                    }
+
+                    if (newPoint.dustText != null)
+                        newPoint.dustText.text =
+                            (darkRubyData.dustFinalStage + darkRubyData.dustFirstStage).ToString();
+                }
+            }
+
+            AddLog("Spawned AP Dark Ruby Podium.");
+        }
+
+        private IEnumerator ApplyDarkRubySkinDelayed()
+        {
+            yield return new WaitForSeconds(0.2f);
+            ApplyHardcodedDarkRubySkin();
+        }
+
+        public void ApplyHardcodedDarkRubySkin()
+        {
+            var player = GetGamePlayCore()?.player;
+            if (player == null) return;
+
+            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr.name != "Girl") continue;
+                if (sr.material == null) continue;
+                if (sr.material.name.StartsWith("HardcodedDarkRubyMaterial")) continue;
+                ApplyHardcodedSkinToRenderer(sr);
+            }
+        }
+
+        private void ApplyHardcodedSkinToRenderer(SpriteRenderer sr)
+        {
+            var mat = new Material(sr.material);
+            mat.name = "HardcodedDarkRubyMaterial";
+
+            for (int i = 0; i < DarkRubyColorSlots.Length; i++)
+            {
+                int slot = i + 1;
+                string suffix = slot == 1 ? "" : slot.ToString();
+                var s = DarkRubyColorSlots[i];
+                mat.SetColor("_ColorChangeTarget" + suffix, new Color(s.tr, s.tg, s.tb, s.ta));
+                mat.SetColor("_ColorChangeNewCol" + suffix, new Color(s.nr, s.ng, s.nb, s.na));
+                mat.SetFloat("_ColorChangeTolerance" + suffix, s.tol);
+                mat.EnableKeyword("CHANGECOLOR" + slot + "_ON");
+            }
+
+            mat.SetFloat("_ColorChangeLuminosity", 1f);
+            mat.SetFloat("_HsvSaturation", 0f);
+            mat.SetFloat("_HsvBright", 2.0f);
+            mat.EnableKeyword("HSV_ON");
+
+            mat.SetFloat("_GlitchAmount", 5.3f);
+            mat.SetFloat("_GlitchSize", 0.83f);
+            mat.SetFloat("_DistortAmount", 0.5f);
+            mat.SetFloat("_DistortTexXSpeed", 5f);
+            mat.SetFloat("_DistortTexYSpeed", 5f);
+
+            mat.EnableKeyword("GRADIENT2COL_ON");
+            mat.EnableKeyword("GRADIENTCOLORRAMP_ON");
+
+            sr.material = mat;
+            _darkRubySkinApplied = true;
+            AddLog($"Hardcoded Dark Ruby skin applied to {sr.name} (scene: {sr.gameObject.scene.name})");
+        }
+
+        public void ApplySkinForColor(string colorKey)
+        {
+            if (string.IsNullOrEmpty(colorKey)) return;
+            var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            if (itemOverview == null) return;
+
+            if (colorKey == "darkruby")
+            {
+                _playerColorKey = "darkruby";
+                _darkRubyForceSkin = true;
+                ApplyHardcodedDarkRubySkin();
+            }
+            else
+            {
+                _playerColorKey = colorKey;
+                _darkRubyForceSkin = false;
+
+                string skinId = GetSkinIdForColor(colorKey);
+                if (string.IsNullOrEmpty(skinId))
+                {
+                    AddLog($"Skin: no GUID for '{colorKey}'");
+                    return;
+                }
+
+                GameSetting.Instance.rubySkinID.SetValue(skinId, "RubiniteAP");
+                itemOverview.currentSkinIDFlag.SetValue(skinId, "RubiniteAP");
+                AddLog($"Skin: applied vanilla '{colorKey}' ({skinId})");
+
+                var skins = Resources.FindObjectsOfTypeAll<ChangeRubySkin>();
+                foreach (var skin in skins)
+                {
+                    if (skin != null) skin.ChangeSkin();
+                }
+            }
+        }
+
         public Sprite PickIconForItem(string itemName, bool isCrossGame = false)
         {
             if (string.IsNullOrEmpty(itemName)) return null;
@@ -2325,12 +2693,6 @@ namespace RubiniteAP
 
             if (itemName.EndsWith(" Sigil"))
             {
-                var bossKey = SigilToBossKey(itemName);
-                if (!string.IsNullOrEmpty(bossKey))
-                {
-                    var sprite = FindBossSteleSprite(bossKey);
-                    if (sprite != null) return sprite;
-                }
                 return LoadCustomSprite("ap_icon_sigil.png", 0.5f);
             }
 
@@ -2582,6 +2944,38 @@ namespace RubiniteAP
             foreach (var kv in _skillTreeLocationIds)
                 if (kv.Value == locationId) return "Skill: " + kv.Key;
             return "Location #" + locationId;
+        }
+
+        public bool IsPlayerAlive()
+        {
+            var core = GetGamePlayCore();
+            if (core?.player == null) return false;
+            try
+            {
+                var sf = core.player.GetType().GetField("state",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (sf == null) return true;
+                var sv = sf.GetValue(core.player);
+                return sv?.ToString() != "Dead";
+            }
+            catch { return true; }
+        }
+
+        private SpriteRenderer GetGirlSr()
+        {
+            if (_cachedGirlSr != null) return _cachedGirlSr;
+            var player = GetGamePlayCore()?.player;
+            if (player == null) return null;
+            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+                if (sr.name == "Girl") { _cachedGirlSr = sr; return sr; }
+            return null;
+        }
+
+        public void ApplyHardcodedDarkRubySkinToRenderer(SpriteRenderer sr)
+        {
+            if (sr == null || sr.material == null) return;
+            if (sr.material.name.StartsWith("HardcodedDarkRubyMaterial")) return;
+            ApplyHardcodedSkinToRenderer(sr);
         }
     }
 
