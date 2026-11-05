@@ -90,6 +90,7 @@ namespace RubiniteAP
 
         private readonly HashSet<string> _crossGameScoutedTitles = new HashSet<string>();
         private readonly HashSet<string> _enabledChecks = new HashSet<string>();
+        private readonly HashSet<string> _missingSpriteWarnings = new();
         
         private int _mySlot;
         private bool _needsFullLock;
@@ -2149,7 +2150,8 @@ namespace RubiniteAP
 
             if (!System.IO.File.Exists(path))
             {
-                AddLog($"LoadCustomSprite: file NOT FOUND '{path}'");
+                if (_missingSpriteWarnings.Add(fileName))
+                    AddLog($"LoadCustomSprite: file NOT FOUND '{path}' (will not warn again)");
                 return null;
             }
 
@@ -2647,15 +2649,21 @@ namespace RubiniteAP
             if (string.IsNullOrEmpty(itemName)) return null;
 
             string cacheKey = itemName + "|" + isCrossGame;
-            if (_pickIconCache.TryGetValue(cacheKey, out var cachedIcon))
+            if (_pickIconCache.TryGetValue(cacheKey, out var cachedIcon) && cachedIcon != null)
                 return cachedIcon;
 
-            // Cross-game items have no local icon — explicit flag from the scout,
-            // not a name heuristic. Vanilla names like "Mira's Shadow" would
-            // otherwise be mis-detected.
+            var sprite = ResolveIcon(itemName, isCrossGame);
+            if (sprite != null)
+                _pickIconCache[cacheKey] = sprite;
+            return sprite;
+        }
+
+        private Sprite ResolveIcon(string itemName, bool isCrossGame)
+        {
             if (isCrossGame)
                 return LoadCustomSprite("ap_icon_unknown.png", 0.5f);
 
+            // --- Talismans: real TalismanData.Icon ---
             if (itemName.StartsWith("Talisman: "))
             {
                 var overview = SingletonScriptableObject<TalismanDataOverview>.Instance;
@@ -2663,21 +2671,32 @@ namespace RubiniteAP
                 {
                     foreach (var tal in overview.GetAllData())
                     {
-                        if (tal?.Icon == null) continue;
-                        if (!string.IsNullOrEmpty(tal.DisplayName)
-                            && _talismanItemByDataId.TryGetValue(tal.DisplayName, out var mapped)
-                            && mapped == itemName)
-                        {
+                        if (tal?.Icon == null || string.IsNullOrEmpty(tal.DisplayName)) continue;
+                        if (_talismanItemByDataId.TryGetValue(tal.DisplayName, out var mapped) && mapped == itemName)
                             return tal.Icon;
-                        }
                     }
                 }
                 return LoadCustomSprite("ap_icon_talisman.png", 0.5f);
             }
 
-            if (itemName.StartsWith("Skill ") && _skillIconByName.TryGetValue(itemName, out var skillIcon))
-                return skillIcon;
+            // --- Skills: SkillData.Icon (no atlas dependency) ---
+            if (itemName.StartsWith("Skill "))
+            {
+                if (_skillIconByName.TryGetValue(itemName, out var cached) && cached != null)
+                    return cached;
 
+                // 1) Direct reference via SkillTreeData.skillName -> SkillDataOverview -> SkillData.Icon
+                var viaSkillData = LookupSkillDataIcon(itemName);
+                if (viaSkillData != null) { _skillIconByName[itemName] = viaSkillData; return viaSkillData; }
+
+                // 2) Hardcoded sprite-name lookup (only if the atlas has this specific sprite loaded)
+                var viaName = LookupSkillIconByName(itemName);
+                if (viaName != null) { _skillIconByName[itemName] = viaName; return viaName; }
+
+                return LoadCustomSprite("ap_icon_skill.png", 0.5f);
+            }
+
+            // --- Filler (Blood Crystals) ---
             if (_fillerDustValues.ContainsKey(itemName))
             {
                 if (_fillerIconNames.TryGetValue(itemName, out var iconName))
@@ -2688,15 +2707,139 @@ namespace RubiniteAP
                 return FindSpriteByName("UI_Crystal_0") ?? LoadCustomSprite("ap_icon_filler.png", 0.5f);
             }
 
+            // --- Shop Expansion ---
             if (itemName == "Shop Expansion")
                 return LoadCustomSprite("ap_icon_shop.png", 0.5f);
 
+            // --- Sigils: fall back to the boss's LevelData icon ---
             if (itemName.EndsWith(" Sigil"))
-            {
-                return LoadCustomSprite("ap_icon_sigil.png", 0.5f);
-            }
+                return ResolveSigilIcon(itemName);
 
             return LoadCustomSprite("ap_icon_unknown.png", 0.5f);
+        }
+
+        private Sprite LookupSkillDataIcon(string apItemName)
+        {
+            // Override: all seven "Enhanced Power" slots share the Enhanced Strike icon.
+            // The APWorld renamed Pureblood Heart / Enhanced Heal to "Enhanced Power",
+            // but there is no real "Enhanced Power" skill asset in-game.
+            if (apItemName == "Skill 2-4: Enhanced Power"
+            || apItemName == "Skill 2-7: Enhanced Power"
+            || apItemName == "Skill 3-3: Enhanced Power"
+            || apItemName == "Skill 3-5: Enhanced Power"
+            || apItemName == "Skill 4-1: Enhanced Power"
+            || apItemName == "Skill 4-3: Enhanced Power"
+            || apItemName == "Skill 4-6: Enhanced Power")
+            {
+                var powerIcon = FindSpriteByName("SkillsTreeIcon_5");
+                if (powerIcon != null) return powerIcon;
+            }
+
+            var treeOverview = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+            var skillOverview = SingletonScriptableObject<SkillDataOverview>.Instance;
+            if (treeOverview == null || skillOverview == null) return null;
+
+            foreach (var tree in treeOverview.GetAllData())
+            {
+                if (tree == null) continue;
+                if (!_skillItemByTreeId.TryGetValue(tree.DisplayName, out var mapped) || mapped != apItemName)
+                    continue;
+
+                var skillNameRef = GetFieldOrProperty(tree, "skillName");
+                if (skillNameRef == null) continue;
+
+                var id = GetFieldOrProperty(skillNameRef, "Id")?.ToString();
+                if (string.IsNullOrEmpty(id)) continue;
+
+                var skillData = skillOverview.FindUniqueId(id);
+                if (skillData == null) continue;
+
+                var icon = GetFieldOrProperty(skillData, "Icon") as Sprite
+                        ?? GetFieldOrProperty(skillData, "icon") as Sprite;
+                if (icon != null) return icon;
+            }
+            return null;
+        }
+
+        private Sprite LookupSkillIconByName(string apItemName)
+        {
+            foreach (var kv in _skillItemByTreeId)
+            {
+                if (kv.Value != apItemName) continue;
+                var spriteName = SkillTreeIconName(kv.Key);
+                if (string.IsNullOrEmpty(spriteName)) return null;
+                return FindSpriteByName(spriteName);
+            }
+            return null;
+        }
+
+        private Sprite ResolveSigilIcon(string itemName)
+        {
+            var bossKey = SigilToBossKey(itemName);
+            if (!string.IsNullOrEmpty(bossKey))
+            {
+                var levelName = LevelForBossKey(bossKey);
+                var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+                if (overview != null && !string.IsNullOrEmpty(levelName))
+                {
+                    LevelData levelData = overview.FindUniqueId(levelName);
+                    if (levelData == null)
+                    {
+                        foreach (var ld in overview.GetAllData())
+                        {
+                            if (ld != null && ld.DisplayName == levelName) { levelData = ld; break; }
+                        }
+                    }
+                    var bossIcon = levelData?.bossIcon_ForChallengeArea ?? levelData?.bossIcon;
+                    if (bossIcon != null) return bossIcon;
+                }
+            }
+
+            return LoadCustomSprite("ap_icon_sigil.png", 0.5f);
+        }
+
+        private static string SigilToBossKey(string sigilItemName)
+        {
+            switch (sigilItemName)
+            {
+                case "Beast Sigil":         return "Beast";
+                case "Guardian Sigil":      return "Guardian";
+                case "Cult Sigil":          return "Cult";
+                case "Gravekeeper Sigil":   return "Gravekeeper";
+                case "Plaguebearer Sigil":  return "PlagueRoot";
+                case "Nestling Sigil":      return "Nestling";
+                case "Faye II Sigil":       return "Guardian2";
+                case "Ghost Sigil":         return "Ghost";
+                case "Hunter Sigil":        return "Master";
+                case "EyesTree Sigil":      return "EyesTree";
+                case "Puppet Master Sigil": return "Queen";
+                case "Witch Sigil":         return "Witch";
+                case "Witch II Sigil":      return "Witch2";
+                case "Shadow Sigil":        return "DarkRuby";
+                default:                    return null;
+            }
+        }
+
+        private static string LevelForBossKey(string bossKey)
+        {
+            switch (bossKey)
+            {
+                case "Beast":       return "BeastLevel";
+                case "Guardian":    return "GuardianLevel";
+                case "Cult":        return "CultLevel";
+                case "Gravekeeper": return "PlagueLevel";
+                case "PlagueRoot":  return "PlagueRootLevel";
+                case "Nestling":    return "NestlingLevel";
+                case "Guardian2":   return "GuardianLevel2";
+                case "Ghost":       return "GhostLevel";
+                case "Master":      return "MasterLevel";
+                case "EyesTree":    return "EyesTreeLevel";
+                case "Queen":       return "QueenLevel";
+                case "Witch":       return "Witch_FirstRunLevel";
+                case "Witch2":      return "WitchLevel";
+                case "DarkRuby":    return "DarkRubyLevel";
+                default:            return null;
+            }
         }
 
         private Sprite FindSpriteByName(string name)
