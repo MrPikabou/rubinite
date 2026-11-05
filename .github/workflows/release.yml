@@ -6,10 +6,10 @@ on:
       - 'v*'
 
 env:
-  MOD_DIR: RubiniteAP
-  CSPROJ: RubiniteAP/RubiniteAP.csproj
-  APWORLD_PATH: worlds/rubinite
-  ARCHIPELAGO_JSON: worlds/rubinite/archipelago.json
+  MOD_DIR: mod/RubiniteAP
+  CSPROJ: mod/RubiniteAP/RubiniteAP.csproj
+  APWORLD_PATH: mod/worlds/rubinite
+  ARCHIPELAGO_JSON: mod/worlds/rubinite/archipelago.json
   AP_VERSION: '0.6.8'
   PYTHON_VERSION: '3.12'
   DOTNET_VERSION: '10.0.x'
@@ -25,20 +25,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 
-
-      
-      # --- 0. Debugger lol ---
-      - name: Debug — show what the runner sees
-        shell: pwsh
-        run: |
-          Write-Host "=== PWD ==="
-          Get-Location
-          Write-Host "=== git HEAD ==="
-          git log -1 --oneline
-          Write-Host "=== worlds/ tree ==="
-          Get-ChildItem -Recurse worlds -ErrorAction SilentlyContinue | Select-Object FullName
-          Write-Host "=== all archipelago.json on disk ==="
-          Get-ChildItem -Recurse -Filter "archipelago.json" -ErrorAction SilentlyContinue | Select-Object FullName
 
       # --- 1. Patch world_version from tag ---
       - name: Patch world_version from tag
