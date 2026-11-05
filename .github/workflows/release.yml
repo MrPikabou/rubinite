@@ -26,6 +26,14 @@ jobs:
         with:
           fetch-depth: 0 
 
+      # --- 0 Install rsync lol ---
+      - name: Install rsync
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          /c/msys64/usr/bin/pacman.exe -Sy --noconfirm rsync
+          echo "C:\msys64\usr\bin" >> "$GITHUB_PATH"
+
       # --- 1. Patch world_version from tag ---
       - name: Patch world_version from tag
         shell: pwsh
