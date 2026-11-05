@@ -12,6 +12,8 @@ tools/*
 
 # APWorld build artifacts
 worlds/*.txt
+mod/worlds/*.apworld
+mod/worlds/*.yaml
 worlds/*.apworld
 worlds/*.yaml
 !worlds/rubinite/
