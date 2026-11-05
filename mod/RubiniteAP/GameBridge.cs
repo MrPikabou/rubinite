@@ -1078,19 +1078,23 @@ namespace RubiniteAP
                 catch (System.Exception ex) { AddLog("HUD spawn failed: " + ex.Message); }
             }
 
+
+
+
+
+
+            // F6 — Dump ALL unique sprites in the scene
+            if (Input.GetKeyDown(KeyCode.F6))
+            {
+                DumpAllSprites();
+            }
+
             // F7 — Toggle the in-game HUD
             if (Input.GetKeyDown(KeyCode.F7) && _inGameHud != null)
             {
                 _inGameHud.Toggle();
                 AddLog($"In-game HUD: {(_inGameHud.IsUserEnabled ? "ON" : "OFF")}");
             }
-
-
-
-
-
-
-
 
             // F9 — Hardcoded Dark Ruby Skin togglen
             if (Input.GetKeyDown(KeyCode.F9))
@@ -3259,6 +3263,52 @@ namespace RubiniteAP
                 case 4: return checks.Contains("rank");
                 default: return false;
             }
+        }
+
+        // TODO DEBUGGING DELETE
+        private void DumpAllSprites()
+        {
+            AddLog("========================================");
+            AddLog("=== ALL UNIQUE SPRITES DUMP (F6) ===");
+
+            // We use a dictionary to avoid spamming the log with the same sprite 500 times.
+            // Key = Sprite Name, Value = Example GameObject it's attached to.
+            var uniqueSprites = new Dictionary<string, string>();
+
+            // 1. Scan all UI Images (Menus, HUDs)
+            var images = Resources.FindObjectsOfTypeAll<UnityEngine.UI.Image>();
+            foreach (var img in images)
+            {
+                if (img.sprite != null && img.gameObject.scene.IsValid())
+                {
+                    if (!uniqueSprites.ContainsKey(img.sprite.name))
+                        uniqueSprites[img.sprite.name] = $"[UI] {img.gameObject.name}";
+                }
+            }
+
+            // 2. Scan all World Sprites (Characters, Environment, 3D Objects)
+            var spriteRenderers = Resources.FindObjectsOfTypeAll<SpriteRenderer>();
+            foreach (var sr in spriteRenderers)
+            {
+                if (sr.sprite != null && sr.gameObject.scene.IsValid())
+                {
+                    if (!uniqueSprites.ContainsKey(sr.sprite.name))
+                        uniqueSprites[sr.sprite.name] = $"[World] {sr.gameObject.name}";
+                }
+            }
+
+            // Sort alphabetically so it's easier to read in the log
+            var sortedKeys = new List<string>(uniqueSprites.Keys);
+            sortedKeys.Sort();
+
+            AddLog($"Found {sortedKeys.Count} unique sprites in the current scene:");
+            
+            foreach (var key in sortedKeys)
+            {
+                AddLog($"- Sprite: '{key}' (Example Obj: {uniqueSprites[key]})");
+            }
+            
+            AddLog("========================================");
         }
     }
 
