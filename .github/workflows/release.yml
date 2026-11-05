@@ -28,7 +28,7 @@ jobs:
 
       
       # --- 0. Debugger lol ---
-        - name: Debug — show what the runner sees
+      - name: Debug — show what the runner sees
         shell: pwsh
         run: |
           Write-Host "=== PWD ==="
