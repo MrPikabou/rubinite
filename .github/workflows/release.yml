@@ -54,6 +54,16 @@ jobs:
           ap-version: ${{ env.AP_VERSION }}
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Debug — show action outputs
+        shell: pwsh
+        run: |
+          Write-Host "apworld output: '${{ steps.apworld.outputs.apworld }}'"
+          Write-Host "template output: '${{ steps.template.outputs.template }}'"
+          Write-Host "=== build/ tree ==="
+          Get-ChildItem -Recurse build -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Host "=== any .apworld files anywhere ==="
+          Get-ChildItem -Recurse -Filter "*.apworld" -ErrorAction SilentlyContinue | Select-Object FullName
+
       # --- 3. Generate the YAML template ---
       - name: Generate YAML template
         id: template
