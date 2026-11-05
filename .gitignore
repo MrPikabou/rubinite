@@ -11,7 +11,26 @@ BepInEx/*
 tools/*
 
 # APWorld build artifacts
-archipelago/*.txt
+worlds/*.txt
+worlds/*.apworld
+worlds/*.yaml
+!worlds/rubinite/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+.idea/
+
+# Build Output
+dist/
 
 # Binaries
 *.dll
@@ -27,3 +46,4 @@ archipelago/*.txt
 # other
 *.txt
 *.png
+*.log
