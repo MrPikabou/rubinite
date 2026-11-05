@@ -23,6 +23,22 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 
+
+      
+      # --- 0. Debugger lol ---
+        - name: Debug — show what the runner sees
+        shell: pwsh
+        run: |
+          Write-Host "=== PWD ==="
+          Get-Location
+          Write-Host "=== git HEAD ==="
+          git log -1 --oneline
+          Write-Host "=== worlds/ tree ==="
+          Get-ChildItem -Recurse worlds -ErrorAction SilentlyContinue | Select-Object FullName
+          Write-Host "=== all archipelago.json on disk ==="
+          Get-ChildItem -Recurse -Filter "archipelago.json" -ErrorAction SilentlyContinue | Select-Object FullName
 
       # --- 1. Patch world_version from tag ---
       - name: Patch world_version from tag
