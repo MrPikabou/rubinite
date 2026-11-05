@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  MOD_DIR: mod/RubiniteAP
+  CSPROJ: mod/RubiniteAP/RubiniteAP.csproj
+  APWORLD_PATH: mod/RubiniteAP/worlds/rubinite
+  ARCHIPELAGO_JSON: mod/RubiniteAP/worlds/rubinite/archipelago.json
+  AP_VERSION: '0.6.8'
+  PYTHON_VERSION: '3.12'
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- 1. Patch world_version from tag ---
+      - name: Patch world_version from tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $jsonPath = "$env:ARCHIPELAGO_JSON"
+          $json = Get-Content -Raw -Path $jsonPath | ConvertFrom-Json
+          $json.world_version = $tag
+          $json | ConvertTo-Json -Depth 10 | Set-Content -Path $jsonPath -Encoding utf8
+          Write-Host "Patched world_version to $tag"
+
+      # --- 2. Package the apworld ---
+      - name: Package APWorld
+        id: apworld
+        uses: Eijebong/ap-actions/package-apworld@main
+        with:
+          path: ${{ env.APWORLD_PATH }}
+          ap-version: ${{ env.AP_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # --- 3. Generate the YAML template ---
+      - name: Generate YAML template
+        id: template
+        uses: Eijebong/ap-actions/generate-template@main
+        with:
+          apworld-path: ${{ env.APWORLD_PATH }}
+          ap-version: ${{ env.AP_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # --- 4. Build the C# DLL ---
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Build RubiniteAP DLL
+        run: dotnet build ${{ env.CSPROJ }} -c Release -o dist
+
+      # --- 5. Collect all artifacts into dist/ ---
+      - name: Collect all release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Path "${{ steps.apworld.outputs.apworld }}" -Destination "dist/" -ErrorAction SilentlyContinue
+          Copy-Item -Path "${{ steps.template.outputs.template }}" -Destination "dist/" -ErrorAction SilentlyContinue
+          Get-ChildItem dist
+
+      # --- 6. Create the GitHub Release ---
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
