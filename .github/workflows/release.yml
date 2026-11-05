@@ -6,10 +6,10 @@ on:
       - 'v*'
 
 env:
-  MOD_DIR: mod/RubiniteAP
-  CSPROJ: mod/RubiniteAP/RubiniteAP.csproj
-  APWORLD_PATH: mod/RubiniteAP/worlds/rubinite
-  ARCHIPELAGO_JSON: mod/RubiniteAP/worlds/rubinite/archipelago.json
+  MOD_DIR: RubiniteAP
+  CSPROJ: RubiniteAP/RubiniteAP.csproj
+  APWORLD_PATH: worlds/rubinite
+  ARCHIPELAGO_JSON: worlds/rubinite/archipelago.json
   AP_VERSION: '0.6.8'
   PYTHON_VERSION: '3.12'
   DOTNET_VERSION: '10.0.x'
