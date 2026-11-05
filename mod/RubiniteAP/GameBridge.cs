@@ -182,6 +182,21 @@ namespace RubiniteAP
             Client.DeathLinkReceived += OnDeathLinkReceived;
         }
 
+        private static byte[] TryReadEmbeddedResource(string fileName)
+        {
+            var asm = typeof(GameBridge).Assembly;
+            string resourceName = $"RubiniteAP.Resources.{fileName}";
+            using (var stream = asm.GetManifestResourceStream(resourceName))
+            {
+                if (stream == null) return null;
+                using (var ms = new System.IO.MemoryStream())
+                {
+                    stream.CopyTo(ms);
+                    return ms.ToArray();
+                }
+            }
+        }
+
         private void OnConnectionChanged(bool connected, string message)
         {
             StatusMessage = message;
@@ -2146,60 +2161,76 @@ namespace RubiniteAP
             if (_customSpriteCache.TryGetValue(cacheKey, out var cached))
                 return cached;
 
-            string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
+            byte[] fileData = null;
 
-            if (!System.IO.File.Exists(path))
+            string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
+            if (System.IO.File.Exists(path))
+            {
+                try { fileData = System.IO.File.ReadAllBytes(path); } catch { }
+            }
+
+            if (fileData == null)
+                fileData = TryReadEmbeddedResource(fileName);
+
+            if (fileData == null)
             {
                 if (_missingSpriteWarnings.Add(fileName))
-                    AddLog($"LoadCustomSprite: file NOT FOUND '{path}' (will not warn again)");
+                    AddLog($"LoadCustomSprite: '{fileName}' not found (external or embedded)");
                 return null;
             }
 
-            if (System.IO.File.Exists(path))
+            try
             {
-                try
+                Texture2D tex = new Texture2D(2, 2);
+                UnityEngine.ImageConversion.LoadImage(tex, fileData);
+
+                tex.filterMode = FilterMode.Point;
+                tex.wrapMode = TextureWrapMode.Clamp;
+
+                if (shapeTex != null)
                 {
-                    byte[] fileData = System.IO.File.ReadAllBytes(path);
-                    Texture2D tex = new Texture2D(2, 2);
-                    UnityEngine.ImageConversion.LoadImage(tex, fileData);
-
-                    tex.filterMode = FilterMode.Point;
-                    tex.wrapMode = TextureWrapMode.Clamp;
-
-                    if (shapeTex != null)
-                    {
-                        shapeTex.filterMode = FilterMode.Point;
-                        shapeTex.wrapMode = TextureWrapMode.Clamp;
-                        tex = ApplyShapeToTexture(tex, shapeTex);
-                    }
-                    
-                    float ppu = 100f;
-                    if (forcedPpu > 0f) ppu = forcedPpu;
-                    else if (targetHeight > 0f) ppu = tex.height / targetHeight; 
-
-                    var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
-                    _customSpriteCache[cacheKey] = sprite;
-                    return sprite;
+                    shapeTex.filterMode = FilterMode.Point;
+                    shapeTex.wrapMode = TextureWrapMode.Clamp;
+                    tex = ApplyShapeToTexture(tex, shapeTex);
                 }
-                catch (Exception ex)
-                {
-                    AddLog($"Failed to load {fileName}: {ex.Message}");
-                }
+
+                float ppu = 100f;
+                if (forcedPpu > 0f) ppu = forcedPpu;
+                else if (targetHeight > 0f) ppu = tex.height / targetHeight;
+
+                var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), ppu);
+                _customSpriteCache[cacheKey] = sprite;
+                return sprite;
+            }
+            catch (Exception ex)
+            {
+                AddLog($"Failed to load {fileName}: {ex.Message}");
             }
             return null;
         }
 
         private Sprite[] LoadAndSliceSpriteSheet(string fileName, int frameCount, float targetHeight)
         {
+            byte[] fileData = null;
+
+            // Try external file
             string path = System.IO.Path.Combine(BepInEx.Paths.PluginPath, fileName);
             if (System.IO.File.Exists(path))
             {
+                try { fileData = System.IO.File.ReadAllBytes(path); } catch { }
+            }
+
+            // Fallback to embedded resource
+            if (fileData == null)
+                fileData = TryReadEmbeddedResource(fileName);
+
+            if (fileData != null)
+            {
                 try
                 {
-                    byte[] fileData = System.IO.File.ReadAllBytes(path);
                     Texture2D tex = new Texture2D(2, 2);
                     UnityEngine.ImageConversion.LoadImage(tex, fileData);
-
+                    
                     tex.filterMode = FilterMode.Point;
                     tex.wrapMode = TextureWrapMode.Clamp;
 
@@ -2289,10 +2320,20 @@ namespace RubiniteAP
             Sprite bgBase = LoadCustomSprite("ui_background_1.png", 0.55f);
             
             Texture2D shape2 = null, shape3 = null;
+
+            // --- Load ui_background_2.png (external or embedded) ---
+            byte[] bytes2 = null;
             string path2 = System.IO.Path.Combine(BepInEx.Paths.PluginPath, "ui_background_2.png");
+            if (System.IO.File.Exists(path2)) { try { bytes2 = System.IO.File.ReadAllBytes(path2); } catch { } }
+            if (bytes2 == null) bytes2 = TryReadEmbeddedResource("ui_background_2.png");
+            if (bytes2 != null) { shape2 = new Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(shape2, bytes2); }
+
+            // --- Load ui_background_3.png (external or embedded) ---
+            byte[] bytes3 = null;
             string path3 = System.IO.Path.Combine(BepInEx.Paths.PluginPath, "ui_background_3.png");
-            if (System.IO.File.Exists(path2)) { shape2 = new Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(shape2, System.IO.File.ReadAllBytes(path2)); }
-            if (System.IO.File.Exists(path3)) { shape3 = new Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(shape3, System.IO.File.ReadAllBytes(path3)); }
+            if (System.IO.File.Exists(path3)) { try { bytes3 = System.IO.File.ReadAllBytes(path3); } catch { } }
+            if (bytes3 == null) bytes3 = TryReadEmbeddedResource("ui_background_3.png");
+            if (bytes3 != null) { shape3 = new Texture2D(2, 2); UnityEngine.ImageConversion.LoadImage(shape3, bytes3); }
 
             if (shape2 != null) bgSprites.Add(LoadCustomSprite("ui_background_1.png", 0.55f, shape2));
             if (shape3 != null) bgSprites.Add(LoadCustomSprite("ui_background_1.png", 0.55f, shape3));
