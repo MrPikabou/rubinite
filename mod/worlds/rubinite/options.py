@@ -50,7 +50,7 @@ class StartingBossSelection(Choice):
     """Which portals are unlocked at the start."""
     display_name = "Starting Boss Selection"
     option_vanilla = 0
-    option_random = 1
+    option_randomized = 1
     default = 0
 
 
