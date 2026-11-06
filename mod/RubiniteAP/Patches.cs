@@ -203,6 +203,7 @@ namespace RubiniteAP
 
             try { bridge.SpawnDarkRubyPodium(); }
             catch (System.Exception ex) { bridge.AddLog("SpawnDarkRubyPodium failed: " + ex.Message); }
+            bridge.ApplyDarkRubyGradingToLevelData();
             bridge.SpawnPrefixSucceeded = false;
 
             var portalLevel = bridge.LastPortalLevel;

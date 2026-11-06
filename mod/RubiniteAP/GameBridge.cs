@@ -49,11 +49,19 @@ namespace RubiniteAP
         private readonly Dictionary<string, int> _fillerDustValues = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _fillerIconNames = new Dictionary<string, string>();
 
-        public bool DarkRubyDeathHandled { get; set; }
-        public bool DarkRubyCompleted { get; set; }
-        public bool DarkRubyTimerPausedForCutscene { get; set; }
+        private bool _enableDarkRuby;
+        public bool EnableDarkRuby => _enableDarkRuby;
         public float DarkRubyGradingTime { get; set; } = 60f;
         public float[] DarkRubyGradingScale { get; set; } = new[] { 10f, 20f, 40f };
+        public bool DarkRubyCompleted { get; set; }
+        private bool _isHardcodedDarkRubyActive = false;
+        public bool IsHardcodedDarkRubyActive => _isHardcodedDarkRubyActive;
+        public event Action<ConnectedInfo> SlotDataLoaded;
+        public event Action ChallengeAreaEntered;
+        public event Action<string, string> PortalRemapped;
+
+        public bool DarkRubyDeathHandled { get; set; }
+        public bool DarkRubyTimerPausedForCutscene { get; set; }
         public string LastDarkRubyCutsceneName { get; set; }
         private Sprite _darkRubyIcon;
         private Sprite _darkRubyScenePic;
@@ -73,10 +81,7 @@ namespace RubiniteAP
         };
         private bool _darkRubyForceSkin;
         private bool _darkRubySkinApplied;
-        private bool _enableDarkRuby;
-        private bool _isHardcodedDarkRubyActive = false;
         public bool IsDarkRubySkinEnabled => _playerColorKey == "darkruby" || _darkRubyForceSkin;
-        public bool IsHardcodedDarkRubyActive => _isHardcodedDarkRubyActive;
         private string _previousSkinColor = "red";
         private SpriteRenderer _cachedGirlSr;
 
@@ -134,6 +139,9 @@ namespace RubiniteAP
 
         public int BossDustMultiplier { get; private set; } = 1;
         public readonly Dictionary<string, (int first, int final)> _originalDustValues = new();
+
+        private bool _seedRequiresMissingMod;
+        public bool SeedRequiresMissingMod => _seedRequiresMissingMod;
 
         private bool DeathLinkActive =>
             ApRunActive &&
@@ -488,7 +496,19 @@ namespace RubiniteAP
             
             _enableDarkRuby = info.SlotData?["enable_dark_ruby"]?.Value<bool>() ?? false;
             if (_enableDarkRuby)
-                AddLog("Dark Ruby boss enabled. Will spawn custom podium.");
+            {
+                AddLog("Dark Ruby boss enabled.");
+                ApplyDarkRubyGradingToLevelData();
+
+                bool drModInstalled = BepInEx.Bootstrap.Chainloader.PluginInfos
+                    .ContainsKey("rubinite.darkruby");
+                if (!drModInstalled)
+                {
+                    _seedRequiresMissingMod = true;
+                    AddLog("ERROR: This seed has enable_dark_ruby=true but 'Rubinite Dark Ruby' is not installed.");
+                    AddLog("       Install it, or generate a new seed with 'Enable Dark Ruby' = false.");
+                }
+            }
 
             State.AddChecked(info.CheckedLocations);
             State.Save();
@@ -1210,6 +1230,14 @@ namespace RubiniteAP
 
         private void DoStartRun()
         {
+            if (_seedRequiresMissingMod)
+            {
+                AddLog("Cannot start: this seed requires the 'Rubinite Dark Ruby' mod.");
+                AddLog("Install the mod, or generate a new seed with 'Enable Dark Ruby' = false.");
+                _startingRun = false;
+                return;
+            }
+
             try
             {
                 var isContinuation = State.ChallengeSaveInitialized;
@@ -1272,6 +1300,7 @@ namespace RubiniteAP
                     _startingRun = false;
                     yield return new WaitForSeconds(0.4f);
                     ApplyRuntime(true);
+                    ApplyDarkRubyGradingToLevelData();
                     SpawnShopObject();
                     try { SpawnDarkRubyPodium(); }
                     catch (System.Exception ex) { AddLog("SpawnDarkRubyPodium failed: " + ex.Message); }
@@ -1328,7 +1357,7 @@ namespace RubiniteAP
                 CopyDirectory(directory, IOPath.Combine(destination, IOPath.GetFileName(directory)));
         }
 
-        private static GamePlayCore GetGamePlayCore()
+        internal static GamePlayCore GetGamePlayCore()
         {
             try { return GamePlayCore.Instance; }
             catch { return null; }
@@ -2604,10 +2633,6 @@ namespace RubiniteAP
                     }
                 }
 
-                darkRubyData.gradingTime = DarkRubyGradingTime;
-                darkRubyData.gradingScale = (float[])DarkRubyGradingScale.Clone();
-                AddLog($"Dark Ruby: set grading (time={darkRubyData.gradingTime}, scale=[{string.Join(", ", darkRubyData.gradingScale)}])");
-
                 AddLog($"Dark Ruby setStringsWhenLevelCompleted: {darkRubyData.setStringsWhenLevelCompleted?.Count ?? 0} entries");
                 if (darkRubyData.setStringsWhenLevelCompleted != null)
                 {
@@ -3367,6 +3392,49 @@ namespace RubiniteAP
             }
             
             AddLog("========================================");
+        }
+
+        private static LevelData FindLevelDataById(LevelDataOverview overview, string id)
+        {
+            if (overview == null) return null;
+            var data = overview.FindUniqueId(id);
+            if (data != null) return data;
+            foreach (var ld in overview.GetAllData())
+            {
+                if (ld != null && ld.DisplayName == id) return ld;
+            }
+            return null;
+        }
+
+        public LevelData GetLevelDataFor(string level)
+        {
+            var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+            return FindLevelDataById(overview, level);
+        }
+
+        /// <summary>
+        /// Writes the seed's dark_ruby_grading values into the DarkRubyLevelData asset.
+        /// Progression-critical: the Rank Clear check reads LevelData.gradingTime/scale,
+        /// so this must run before any Dark Ruby fight completes. Called from OnConnected
+        /// and again after entering the Challenge Area, in case the asset was reloaded.
+        /// </summary>
+        public void ApplyDarkRubyGradingToLevelData()
+        {
+            if (!_enableDarkRuby) return;
+            var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+            if (overview == null) return;
+
+            var darkRubyData = FindLevelDataById(overview, "DarkRubyLevel");
+            if (darkRubyData == null)
+            {
+                AddLog("WARNING: ApplyDarkRubyGradingToLevelData — DarkRubyLevel LevelData not found.");
+                return;
+            }
+
+            darkRubyData.gradingTime = DarkRubyGradingTime;
+            darkRubyData.gradingScale = (float[])DarkRubyGradingScale.Clone();
+            AddLog($"Dark Ruby grading applied to LevelData: time={DarkRubyGradingTime}, " +
+                $"scale=[{string.Join(", ", DarkRubyGradingScale)}]");
         }
     }
 
