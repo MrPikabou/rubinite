@@ -423,12 +423,20 @@ namespace RubiniteAP
                     for (int i = _lastSentCount; i < sent.Count; i++)
                     {
                         var s = sent[i];
-                        if (s.RecipientSlot != _bridge.MySlot) continue;
                         if (receivedSourceIds.Contains(s.LocationId)) continue;
 
                         var icon = _bridge.PickIconForItem(s.ItemName);
                         var locName = s.LocationDisplayName ?? "a check";
-                        AddToast("Sent", s.ItemName, locName, icon, s.Flags);
+
+                        if (s.RecipientSlot == _bridge.MySlot)
+                        {
+                            continue; 
+                        }
+                        else
+                        {
+                            string recipient = _bridge.GetSlotName(s.RecipientSlot);
+                            AddToast("Sent", s.ItemName, "to " + recipient, icon, s.Flags);
+                        }
                     }
                     _lastSentCount = sent.Count;
                 }
@@ -579,11 +587,13 @@ namespace RubiniteAP
                 if (child.name == "Row") Destroy(child);
             }
 
+            string actualPortalLevel = _bridge.GetPortalLevelForBoss(boss.Level);
+            var actualPortalBoss = GameData.FindByLevel(actualPortalLevel);
+            
             bool portalUnlocked = _bridge.IsBossUnlockedPublic(boss);
             
             Color32 colorGreen = new Color32(74, 110, 62, 255);
             Color32 colorRed = new Color32(139, 54, 54, 255);
-
             string colorGreenHex = "#" + ColorUtility.ToHtmlStringRGB(colorGreen);
             string colorRedHex = "#" + ColorUtility.ToHtmlStringRGB(colorRed);
             
@@ -599,6 +609,11 @@ namespace RubiniteAP
 
             string headerText = $"<align=center><b>{bossName}</b></align>\n\n";
             
+            if (actualPortalBoss != null && actualPortalBoss.Key != boss.Key)
+            {
+                headerText += $"<align=center><size=16><color=#6b503b>at {actualPortalBoss.Name}'s Portal</color></size></align>\n\n";
+            }
+            
             headerText += $"{status}\n";
 
             if (boss.Key == _bridge.GoalBossKey && _bridge.GoalBossKillsRequired > 0)
@@ -607,13 +622,9 @@ namespace RubiniteAP
                 int req = _bridge.GoalBossKillsRequired;
                 
                 if (kills >= req)
-                {
                     headerText += $"<color={colorGreenHex}>Goal Unlocked (Kills: {kills}/{req})</color>\n";
-                }
                 else
-                {
                     headerText += $"<color={colorRedHex}>Goal Locked (Kills: {kills}/{req})</color>\n";
-                }
             }
             
             headerText += "\n"; 
