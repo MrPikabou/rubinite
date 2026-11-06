@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from rule_builder.rules import CanReachRegion
+from BaseClasses import ItemClassification
 
 from . import data
 
@@ -41,7 +42,19 @@ def set_all_rules(world: RubiniteWorld) -> None:
                     )
                 )
 
-    def _goal_condition(state, world=world):
+    def _skill_tree_condition(state):
+        reachable = 0
+        for key, name, _l, _s in world.active_bosses:
+            if state.can_reach(name, "Region", world.player):
+                reachable += 1
+        
+        return reachable > world.options.starting_boss_count.value
+
+    for tree_id, title in data.SKILLS:
+        loc = world.get_location(data.skill_tree_location_name(tree_id, title))
+        loc.access_rule = _skill_tree_condition
+
+    def _goal_condition(state):
         goal_key = world.get_goal_boss_key()
         goal_name = next(
             name for key, name, _l, _s in world.active_bosses if key == goal_key
@@ -62,5 +75,15 @@ def set_all_rules(world: RubiniteWorld) -> None:
                 reachable += 1
         return reachable >= required
 
+    goal_key = world.get_goal_boss_key()
+    goal_name = next(name for key, name, _l, _s in world.active_bosses if key == goal_key)
+    
+    victory_loc = world.get_location(f"{goal_name} Defeated")
+    victory_loc.access_rule = _goal_condition
+    
+    if victory_loc.item:
+        victory_loc.item.classification = ItemClassification.progression
 
-    world.set_completion_rule(_goal_condition)
+    world.multiworld.completion_condition[world.player] = (
+        lambda state: state.has("Victory", world.player)
+    )
