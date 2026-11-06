@@ -302,11 +302,32 @@ namespace RubiniteDarkRuby
         {
             if (lm?.levelTimer == null) return;
             float time = lm.levelTimer.timer;
+            int rankIndex = CalculateRankIndex(lm.levelData, time);
+
             _plugin.State.LastFightTimeSeconds = time;
-            _plugin.State.RecordClear(time);
+            _plugin.State.RecordClear(time, rankIndex);
+
+            string rankStr = rankIndex switch
+            {
+                0 => "S", 1 => "A", 2 => "B", 3 => "C", _ => "?"
+            };
             RubiniteDarkRubyPlugin.Log?.LogInfo(
-                "Dark Ruby cleared in " + time.ToString("F2") + "s. Best: "
+                "Dark Ruby cleared in " + time.ToString("F2") + "s (Rank " + rankStr + "). Best: "
                 + _plugin.State.BestTimeSeconds.ToString("F2") + "s");
+        }
+
+        private static int CalculateRankIndex(LevelData levelData, float time)
+        {
+            if (levelData?.gradingScale == null || levelData.gradingScale.Length == 0)
+                return -1;
+
+            float threshold = levelData.gradingTime;
+            for (int i = 0; i < levelData.gradingScale.Length; i++)
+            {
+                threshold += levelData.gradingScale[i];
+                if (time <= threshold) return i;
+            }
+            return levelData.gradingScale.Length;
         }
 
         public bool IsPlayerAlive()

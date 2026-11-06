@@ -19,6 +19,7 @@ namespace RubiniteDarkRuby
         // Last fight result (for the win screen, regardless of rank)
         public float LastFightTimeSeconds = -1f;
         public bool LastFightRankAchieved;
+        public int LastFightRankIndex = -1;   // 0=S, 1=A, 2=B, 3=C, -1=unknown
 
         public bool SkinSelected;
 
@@ -62,11 +63,14 @@ namespace RubiniteDarkRuby
             }
         }
 
-        public void RecordClear(float timeSeconds)
+        public void RecordClear(float timeSeconds, int rankIndex)
         {
             TotalClears++;
             CompletedOnce = true;
             LastFightTimeSeconds = timeSeconds;
+            LastFightRankIndex = rankIndex;
+            LastFightRankAchieved = rankIndex >= 0;
+            Save();
 
             if (BestTimeSeconds < 0 || timeSeconds < BestTimeSeconds)
             {
