@@ -82,7 +82,6 @@ namespace RubiniteAP
         private bool _darkRubyForceSkin;
         private bool _darkRubySkinApplied;
         public bool IsDarkRubySkinEnabled => _playerColorKey == "darkruby" || _darkRubyForceSkin;
-        private string _previousSkinColor = "red";
         private SpriteRenderer _cachedGirlSr;
 
         private readonly Dictionary<string, Sprite> _customSpriteCache = new();
@@ -1132,25 +1131,6 @@ namespace RubiniteAP
             {
                 _inGameHud.Toggle();
                 AddLog($"In-game HUD: {(_inGameHud.IsUserEnabled ? "ON" : "OFF")}");
-            }
-
-            // F9 — Hardcoded Dark Ruby Skin togglen
-            if (Input.GetKeyDown(KeyCode.F9))
-            {
-                _isHardcodedDarkRubyActive = !_isHardcodedDarkRubyActive;
-
-                if (_isHardcodedDarkRubyActive)
-                {
-                    _previousSkinColor = _playerColorKey;
-                    AddLog("F9: Toggled Hardcoded Dark Ruby Skin ON");
-                    ApplyHardcodedDarkRubySkin();
-                }
-                else
-                {
-                    AddLog($"F9: Toggled Hardcoded Dark Ruby Skin OFF -> reverting to {_previousSkinColor}");
-                    _darkRubySkinApplied = false;
-                    ApplySkinForColor(_previousSkinColor);
-                }
             }
 
             // F10 — HUD-Dauer umschalten: Timed <-> Permanent

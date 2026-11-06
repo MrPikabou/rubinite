@@ -1,4 +1,5 @@
 using PugTool.Unity.Singleton;
+using PugTool.Unity.StringList;
 using UnityEngine;
 
 namespace RubiniteDarkRuby
@@ -76,7 +77,7 @@ namespace RubiniteDarkRuby
 
             sr.material = mat;
             RubiniteDarkRubyPlugin.Log?.LogInfo(
-                "DR skin applied to '" + sr.name
+                "Dark Ruby skin applied to '" + sr.name
                 + "' (renderer scene: " + sr.gameObject.scene.name + ")");
         }
 
@@ -92,18 +93,42 @@ namespace RubiniteDarkRuby
 
             if (GameSetting.Instance?.rubySkinID != null)
                 GameSetting.Instance.rubySkinID.SetValue(targetId, "RubiniteDarkRuby");
-
             var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
             if (itemOverview?.currentSkinIDFlag != null)
                 itemOverview.currentSkinIDFlag.SetValue(targetId, "RubiniteDarkRuby");
 
-            foreach (var skin in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
+            foreach (var skin in UnityEngine.Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
             {
                 if (skin != null) skin.ChangeSkin();
             }
 
+            var player = GamePlayCore.Instance?.player;
+            if (player != null)
+            {
+                foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+                {
+                    if (sr.name != "Girl") continue;
+                    if (sr.material == null) continue;
+                    if (!sr.material.name.StartsWith(MaterialName)) continue;
+
+                    var vanilla = sr.sharedMaterial;
+                    if (vanilla != null && !vanilla.name.StartsWith(MaterialName))
+                    {
+                        sr.material = vanilla;
+                        RubiniteDarkRubyPlugin.Log?.LogInfo(
+                            "Dark Ruby skin: reset material on renderer to '" + vanilla.name + "'");
+                    }
+                    else
+                    {
+                        RubiniteDarkRubyPlugin.Log?.LogWarning(
+                            "Dark Ruby skin: cannot reset material — sharedMaterial is null or Dark Ruby. "
+                            + "Vanilla material may need capture at apply time.");
+                    }
+                }
+            }
+
             RubiniteDarkRubyPlugin.Log?.LogInfo(
-                "DR skin reverted to vanilla (" + targetId + ")");
+                "Dark Ruby skin reverted to vanilla (" + targetId + ")");
         }
 
         public static void Toggle()
@@ -118,7 +143,7 @@ namespace RubiniteDarkRuby
                 {
                     state.LastVanillaSkinId = current;
                     RubiniteDarkRubyPlugin.Log?.LogInfo(
-                        "DR skin: captured vanilla color as '" + current + "'");
+                        "Dark Ruby skin: captured vanilla color as '" + current + "'");
                 }
             }
 
@@ -128,12 +153,12 @@ namespace RubiniteDarkRuby
             if (state.SkinSelected)
             {
                 Apply();
-                RubiniteDarkRubyPlugin.Log?.LogInfo("DR skin: ENABLED");
+                RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby skin: ENABLED");
             }
             else
             {
                 RevertToVanilla();
-                RubiniteDarkRubyPlugin.Log?.LogInfo("DR skin: DISABLED");
+                RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby skin: DISABLED");
             }
         }
     }
