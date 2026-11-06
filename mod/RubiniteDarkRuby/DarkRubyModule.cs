@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Reflection;
 using PugTool.Unity.Singleton;
+using PugTool.Unity.StringList;
 using RubiniteDarkRuby.Debug;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -41,6 +42,18 @@ namespace RubiniteDarkRuby
             {
                 if (Input.GetKeyDown(KeyCode.F10)) ChallengeAreaDumper.DumpChallengeAreaSprites();
                 if (Input.GetKeyDown(KeyCode.F11)) RespawnPodium();
+            }
+
+            // Skin handling — works in CA and in the boss arena
+            if (scene == "ChallengeArea" || scene == "DarkRubyLevel")
+            {
+                if (Input.GetKeyDown(KeyCode.F9)) DarkRubySkin.Toggle();
+
+                if (DarkRubySkin.IsActive)
+                {
+                    var core = GamePlayCore.Instance;
+                    if (core?.player != null) DarkRubySkin.Apply();
+                }
             }
 
             if (scene != "ChallengeArea") return;

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using UnityEngine;
+using IOPath = System.IO.Path;
 
 namespace RubiniteDarkRuby.Resources
 {
@@ -28,8 +29,8 @@ namespace RubiniteDarkRuby.Resources
             // External override path: <PluginPath>/RubiniteDarkRuby/<file>
             try
             {
-                var extFolder = Path.Combine(BepInEx.Paths.PluginPath, "RubiniteDarkRuby");
-                var extPath = Path.Combine(extFolder, fileName);
+                var extFolder = IOPath.Combine(BepInEx.Paths.PluginPath, "RubiniteDarkRuby");
+                var extPath = IOPath.Combine(extFolder, fileName);
                 if (File.Exists(extPath)) data = File.ReadAllBytes(extPath);
             }
             catch { /* fall through to embedded */ }

@@ -1,4 +1,5 @@
 using PugTool.Unity.Singleton;
+using PugTool.Unity.StringList;
 using RubiniteDarkRuby.Resources;
 using UnityEngine;
 

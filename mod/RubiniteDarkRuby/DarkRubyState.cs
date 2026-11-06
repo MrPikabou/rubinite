@@ -20,6 +20,8 @@ namespace RubiniteDarkRuby
         public float LastFightTimeSeconds = -1f;
         public bool LastFightRankAchieved;
 
+        public bool SkinSelected;
+
         [JsonIgnore]
         public string FilePath;
 
