@@ -94,6 +94,7 @@ namespace RubiniteDarkRuby
 
         public GameObject EnsurePodiumSpawned()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return null;
             if (_cachedPodium != null) return _cachedPodium;
             var existing = GameObject.Find("RubiniteDR_Podium");
             if (existing != null) { _cachedPodium = existing; return existing; }
@@ -114,6 +115,7 @@ namespace RubiniteDarkRuby
 
         public void OnChallengeAreaLoaded()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             _cachedPodium = null;
             ApplyGradingToLevelData();
         }
@@ -127,6 +129,7 @@ namespace RubiniteDarkRuby
 
         private void ApplyGradingToLevelData()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             if (!_plugin.Settings.EnableMod.Value) return;
             var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
             if (overview == null) return;
@@ -148,6 +151,7 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyLevelLoaded(LevelManager lm)
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             if (!_plugin.Settings.EnableMod.Value) return;
 
             _darkRubyInProgress = true;
@@ -176,6 +180,7 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyCutsceneStart(string cutsceneName)
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             _lastDarkRubyCutsceneName = cutsceneName;
             RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby: cutscene started '" + cutsceneName + "'");
         }
@@ -193,6 +198,7 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyEnterCutScene()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             var lm = GamePlayCore.Instance?.levelManager;
             if (lm?.levelData?.DisplayName != "DarkRubyLevel" || lm.levelTimer == null) return;
 
@@ -209,6 +215,7 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyExitCutScene()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             var lm = GamePlayCore.Instance?.levelManager;
             if (lm?.levelData?.DisplayName != "DarkRubyLevel") return;
 
@@ -255,6 +262,7 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyBossDead()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             if (_darkRubyDeathHandled) return;
 
             var lm = GamePlayCore.Instance?.levelManager;
@@ -297,7 +305,10 @@ namespace RubiniteDarkRuby
         // ---- Story-scene intercept fallback ----
 
         public bool ShouldInterceptStoryScene()
-            => _darkRubyInProgress && !_darkRubyCompleted;
+        {
+            if (ApBridgeHook.ShouldSuppressStandalone) return false;
+            return _darkRubyInProgress && !_darkRubyCompleted;
+        }
 
         public void OnDarkRubyStorySceneIntercepted()
         {
@@ -321,6 +332,7 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyMissionFailed()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             _darkRubyInProgress = false;
             RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby: MissionFailed — state cleared");
         }

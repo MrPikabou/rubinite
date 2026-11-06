@@ -7,6 +7,7 @@ using UnityEngine;
 namespace RubiniteDarkRuby
 {
     [BepInPlugin(Guid, "Rubinite Dark Ruby", Version)]
+    [BepInDependency("rubinite.archipelago", BepInDependency.DependencyFlags.SoftDependency)]
     public sealed class RubiniteDarkRubyPlugin : BaseUnityPlugin
     {
         public const string Guid = "rubinite.darkruby";
