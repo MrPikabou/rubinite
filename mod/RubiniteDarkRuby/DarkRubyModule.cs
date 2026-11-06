@@ -44,7 +44,7 @@ namespace RubiniteDarkRuby
                 if (Input.GetKeyDown(KeyCode.F11)) RespawnPodium();
             }
 
-            // Skin handling — works in CA and in the boss arena
+            // Skin handling — works in CA and in the boss arena, but NOT in the title menu
             if (scene == "ChallengeArea" || scene == "DarkRubyLevel")
             {
                 if (Input.GetKeyDown(KeyCode.F9)) DarkRubySkin.Toggle();

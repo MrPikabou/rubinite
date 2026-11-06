@@ -16,11 +16,13 @@ namespace RubiniteDarkRuby.Patches
             if (!DarkRubySkin.IsActive) return;
             if (__instance?.spriteRenderer == null) return;
 
-            // Only the actual player character, not portraits or previews
+            // Prevents that Ruby also gets DarkRubySkin on TitleMenu
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "TitleMenu")
+                return;
+
             if (__instance.spriteRenderer.gameObject.name != "Girl") return;
             if (__instance.isPortrait) return;
 
-            // Skip podium preview "Girl" sprites (children of ChallengeLevelPoint)
             var t = __instance.spriteRenderer.transform;
             while (t != null)
             {
