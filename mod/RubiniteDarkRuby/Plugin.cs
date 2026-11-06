@@ -54,6 +54,12 @@ namespace RubiniteDarkRuby
             catch (Exception ex) { Logger.LogWarning("Module.Tick: " + ex.Message); }
         }
 
+        private void LateUpdate()
+        {
+            try { Module?.LateTick(); }
+            catch (Exception ex) { Logger.LogWarning("Module.LateTick: " + ex.Message); }
+        }
+
         private void OnDestroy()
         {
             try { _harmony?.UnpatchSelf(); } catch { }

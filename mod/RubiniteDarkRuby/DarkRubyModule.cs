@@ -61,6 +61,33 @@ namespace RubiniteDarkRuby
             EnsurePodiumSpawned();
         }
 
+        /// <summary>
+        /// Runs after all game Update() and animation work. Re-applies the DR material
+        /// whenever the game has rebuilt the player renderer via ChangeRubySkin.ChangeSkin().
+        /// This catches the "skin snaps back to vanilla during cutscenes / wakeup animation"
+        /// case that the Update-based check misses.
+        /// </summary>
+        public void LateTick()
+        {
+            if (!_plugin.Settings.EnableMod.Value) return;
+            if (!DarkRubySkin.IsActive) return;
+
+            var scene = SceneManager.GetActiveScene().name;
+            if (scene == "TitleMenu") return;
+            if (scene != "ChallengeArea" && scene != "DarkRubyLevel") return;
+
+            var player = GamePlayCore.Instance?.player;
+            if (player == null) return;
+
+            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr.name != "Girl") continue;
+                if (sr.material == null) continue;
+                if (sr.material.name.StartsWith(DarkRubySkin.MaterialName)) continue;
+                DarkRubySkin.ApplyToRenderer(sr);
+            }
+        }
+
         // ---- Podium ----
 
         public GameObject EnsurePodiumSpawned()
