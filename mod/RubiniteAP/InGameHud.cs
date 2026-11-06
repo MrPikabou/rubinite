@@ -507,9 +507,6 @@ namespace RubiniteAP
             foreach (var boss in GameData.Bosses)
                 if (_bridge.IsBossActive(boss.Key)) activeBosses++;
 
-            if (_trackerPanel.transform.childCount == activeBosses && _hoverTargets.Count == activeBosses)
-                return; 
-
             foreach (Transform child in _trackerPanel.transform)
                 Destroy(child.gameObject);
             _hoverTargets.Clear();
@@ -683,8 +680,13 @@ namespace RubiniteAP
                 _tooltipPanel.SetActive(false);
         }
 
-        private static (string label, Color32 color) GetImportance(int flags)
+        private static (string label, Color32 color) GetImportance(int flags, string itemName)
         {
+            if (itemName.EndsWith(" Sigil") || itemName == "Shop Expansion")
+                return ("PROGRESSION", new Color32(255, 210, 100, 255));
+            if (itemName.StartsWith("Skill ") || itemName.StartsWith("Talisman: "))
+                return ("USEFUL", new Color32(150, 200, 255, 255));
+
             if ((flags & 1) != 0) return ("PROGRESSION", new Color32(255, 210, 100, 255));
             if ((flags & 2) != 0) return ("USEFUL",     new Color32(150, 200, 255, 255));
             if ((flags & 4) != 0) return ("TRAP",       new Color32(255, 100, 100, 255));
@@ -693,7 +695,7 @@ namespace RubiniteAP
 
         private void AddToast(string verb, string itemName, string sub, Sprite icon, int flags)
         {
-            var (importance, importanceColor) = GetImportance(flags);
+            var (importance, importanceColor) = GetImportance(flags, itemName);
 
             var root = new GameObject("Toast", typeof(RectTransform));
             root.transform.SetParent(_container, false);
