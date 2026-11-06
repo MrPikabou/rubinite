@@ -47,7 +47,12 @@ class BossShuffle(Choice):
 
 
 class EnableDarkRuby(Toggle):
-    """Enable the Dark Ruby Boss from Roy's Memory."""
+    """Enable the Dark Ruby Boss from Roy's Memory.
+    
+    IMPORTANT: This requires the 'Rubinite Dark Ruby' client mod to be installed.
+    Seeds with this enabled cannot be completed without it. Leave at false
+    unless you have installed the client mod.
+    """
     display_name = "Enable Dark Ruby"
     default = False
 
