@@ -597,9 +597,10 @@ namespace RubiniteAP
             string colorGreenHex = "#" + ColorUtility.ToHtmlStringRGB(colorGreen);
             string colorRedHex = "#" + ColorUtility.ToHtmlStringRGB(colorRed);
             
+            string requiredSigil = _bridge.GetRequiredSigilForPortal(actualPortalLevel);
             string status = portalUnlocked 
                 ? $"<color={colorGreenHex}>Unlocked</color>" 
-                : $"<color={colorRedHex}>Locked</color> (Needs {boss.Sigil ?? "Progression"})";
+                : $"<color={colorRedHex}>Locked</color> (Needs {requiredSigil ?? "Progression"})";
             
             string bossName = boss.Name;
             if (boss.Key == _bridge.GoalBossKey)
@@ -607,11 +608,14 @@ namespace RubiniteAP
                 bossName += $" <color={colorRedHex}>(Goal Boss)</color>";
             }
 
-            string headerText = $"<align=center><b>{bossName}</b></align>\n\n";
-            
+            string headerText = $"<align=center><b>{bossName}</b></align>\n";
             if (actualPortalBoss != null && actualPortalBoss.Key != boss.Key)
             {
                 headerText += $"<align=center><size=16><color=#6b503b>at {actualPortalBoss.Name}'s Portal</color></size></align>\n\n";
+            }
+            else
+            {
+                headerText += "\n";
             }
             
             headerText += $"{status}\n";

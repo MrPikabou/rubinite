@@ -270,6 +270,16 @@ namespace RubiniteAP
             if (bridge == null || !bridge.ApRunActive) return true;
             if (levelData == null) return true;
 
+            if (MenuCore.Instance?.currentMenu is ChallengeWinMenu)
+            {
+                if (levelData.DisplayName == "DarkRubyLevel")
+                {
+                    bridge.AddLog("Blocked leaderboard for Dark Ruby (from Win Screen)");
+                    return false;
+                }
+                return true;
+            }
+
             string portalLevel = levelData.DisplayName;
             if (string.IsNullOrEmpty(portalLevel)) return true;
 
@@ -1134,37 +1144,41 @@ namespace RubiniteAP
             if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "ChallengeArea") return;
             if (__instance.choices == null || choicesText == null) return;
 
-            if (bridge.TryGetMappedLevel("DarkRubyLevel", out var mapped) && mapped != "DarkRubyLevel")
-                return;
-
             var player = GamePlayCore.Instance?.player;
             if (player == null) return;
 
-            bool nearDarkRuby = false;
+            string nearbyPortalLevel = null;
             foreach (var point in Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>())
             {
                 if (point?.gameObject == null || !point.gameObject.scene.IsValid()) continue;
-                if (point.levelName?.displayName != "DarkRubyLevel") continue;
                 var dist = Vector2.Distance(player.transform.position, point.transform.position);
                 if (dist < 3.5f)
                 {
-                    nearDarkRuby = true;
-                    bridge.AddLog($"TalkingChooseMenu: near Dark Ruby (dist={dist:F2}), blocking Illusion");
+                    nearbyPortalLevel = point.levelName?.displayName;
                     break;
                 }
             }
-            if (!nearDarkRuby) return;
 
-            for (int i = 0; i < __instance.choices.Length; i++)
+            if (string.IsNullOrEmpty(nearbyPortalLevel)) return;
+
+            string targetBossLevel = nearbyPortalLevel;
+            if (bridge.TryGetMappedLevel(nearbyPortalLevel, out var mapped))
+                targetBossLevel = mapped;
+
+            if (targetBossLevel == "DarkRubyLevel")
             {
-                var choice = __instance.choices[i];
-                if (choice == null) continue;
-                string text = choicesText[i] ?? "";
-                if (text.Contains("Illusion") || text.Contains("Leaderboard") || text.Contains("幻影") || text.Contains("幻"))
+                bridge.AddLog($"TalkingChooseMenu: near Podium leading to Dark Ruby (portal: {nearbyPortalLevel}), blocking Illusion");
+                for (int i = 0; i < __instance.choices.Length; i++)
                 {
-                    if (choice.button != null) choice.button.interactable = false;
-                    choice.gameObject.SetActive(false);
-                    bridge.AddLog($"TalkingChooseMenu: blocked Illusion [{i}] '{text}'");
+                    var choice = __instance.choices[i];
+                    if (choice == null) continue;
+                    string text = choicesText[i] ?? "";
+                    if (text.Contains("Illusion") || text.Contains("Leaderboard") || text.Contains("幻影") || text.Contains("幻"))
+                    {
+                        if (choice.button != null) choice.button.interactable = false;
+                        choice.gameObject.SetActive(false);
+                        bridge.AddLog($"TalkingChooseMenu: blocked Illusion [{i}] '{text}'");
+                    }
                 }
             }
         }

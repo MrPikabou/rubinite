@@ -1083,6 +1083,24 @@ namespace RubiniteAP
 
 
 
+
+
+
+
+            // F5 — Debug DeathLink senden
+            if (Input.GetKeyDown(KeyCode.F5))
+            {
+                if (Client.IsConnected)
+                {
+                    Client.SendDeathLink("Manual debug DeathLink via F5");
+                    AddLog("F5: Sent manual DeathLink.");
+                }
+                else
+                {
+                    AddLog("F5: Cannot send DeathLink, not connected.");
+                }
+            }
+
             // F6 — Dump ALL unique sprites in the scene
             if (Input.GetKeyDown(KeyCode.F6))
             {
@@ -1936,7 +1954,6 @@ namespace RubiniteAP
             if (!string.IsNullOrEmpty(_lastLoadedLevel))
             {
                 AddLog("Boss defeated: cleared retry state for '" + _lastLoadedLevel + "'");
-                _lastLoadedLevel = null;
                 // _lastPortalLevel stays set: used to reposition the spawn point
                 // when we return to the Challenge Area.
             }
@@ -3272,6 +3289,15 @@ namespace RubiniteAP
                 if (kv.Value == bossLevel) return kv.Key;
             }
             return bossLevel;
+        }
+
+        public string GetRequiredSigilForPortal(string levelName)
+        {
+            if (!string.IsNullOrEmpty(levelName) && _bossSlotInfoByLevel.TryGetValue(levelName, out var info))
+            {
+                return info.sigil;
+            }
+            return null;
         }
 
         public bool IsCheckEnabled(string levelName, int checkIndex)
