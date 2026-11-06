@@ -39,7 +39,17 @@ namespace RubiniteDarkRuby.Patches
 
             if (nearest == null) return;
             if (nearestDist > 3.5f) return;
-            if (nearest.levelName?.displayName != "DarkRubyLevel") return;
+
+            // Resolve the actual boss level this podium leads to (handles shuffle for AP).
+            var portalLevel = nearest.levelName?.displayName;
+            if (string.IsNullOrEmpty(portalLevel)) return;
+
+            string targetLevel = portalLevel;
+            var mapped = ApBridgeHook.GetMappedLevel(portalLevel);
+            if (!string.IsNullOrEmpty(mapped)) targetLevel = mapped;
+
+            // Only block if this podium actually leads to Dark Ruby.
+            if (targetLevel != "DarkRubyLevel") return;
 
             int blocked = 0;
             int count = Mathf.Min(__instance.choices.Length, choicesText.Length);
@@ -63,7 +73,8 @@ namespace RubiniteDarkRuby.Patches
             if (blocked > 0)
             {
                 RubiniteDarkRubyPlugin.Log?.LogInfo(
-                    "Blocked " + blocked + " cut-content option(s) at Dark Ruby podium");
+                    "Blocked " + blocked + " cut-content option(s) at "
+                    + portalLevel + " (-> " + targetLevel + ")");
             }
         }
     }
