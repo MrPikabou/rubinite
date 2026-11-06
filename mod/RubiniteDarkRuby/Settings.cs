@@ -16,6 +16,7 @@ namespace RubiniteDarkRuby
         public ConfigEntry<bool> UseCustomSkin;
         public ConfigEntry<bool> BlockVanillaLeaderboard;
         public ConfigEntry<bool> PauseTimerInCutscenes;
+        public ConfigEntry<bool> LogSkinDiagnostics;
 
         public void Bind(ConfigFile config)
         {
@@ -53,6 +54,9 @@ namespace RubiniteDarkRuby
 
             PauseTimerInCutscenes = config.Bind("Timer", "PauseInCutscenes", true,
                 "Pause the fight timer during cutscenes.");
+
+            LogSkinDiagnostics = config.Bind("Diagnostics", "LogSkinDiagnostics", false,
+                "Log every material change on the player 'Girl' renderers. Very noisy — enable only for debugging.");
         }
 
         /// <summary>Resolves the effective X/Y offset for the current preset.</summary>

@@ -1,12 +1,14 @@
 using PugTool.Unity.Singleton;
 using PugTool.Unity.StringList;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace RubiniteDarkRuby
 {
     internal static class DarkRubySkin
     {
         public const string MaterialName = "HardcodedDarkRubyMaterial";
+        private const string FallbackVanillaSkinId = "eb9dd477-a430-48f8-8a7d-f721ea740a08";
 
         private static readonly (float tr, float tg, float tb, float ta,
                                  float nr, float ng, float nb, float na, float tol)[] ColorSlots = new[]
@@ -25,8 +27,43 @@ namespace RubiniteDarkRuby
 
         public static bool IsActive =>
             RubiniteDarkRubyPlugin.Instance?.State?.SkinSelected ?? false;
+        
+        /// <summary>
+        /// Central gate: should the Dark Ruby skin be applied to this specific renderer right now?
+        /// Rules:
+        ///   - Dark Ruby skin must be selected globally
+        ///   - Never in TitleMenu or GameStartup (bootstrap)
+        ///   - Never for renderers that physically belong to the TitleMenu scene
+        ///     (they can outlive the scene transition through DontDestroyOnLoad)
+        /// </summary>
+        public static bool ShouldApplyToRenderer(SpriteRenderer sr)
+        {
+            if (sr == null) return false;
+            if (!IsActive) return false;
 
-        private const string FallbackVanillaSkinId = "eb9dd477-a430-48f8-8a7d-f721ea740a08";
+            var activeScene = SceneManager.GetActiveScene().name;
+            var srScene = sr.gameObject.scene.name;
+
+            // Never tint anything actually inside the TitleMenu scene.
+            // The visible title-screen preview lives here.
+            if (srScene == "TitleMenu") return false;
+
+            // Bootstrap frame: skip until GameStartup is done.
+            if (activeScene == "GameStartup") return false;
+
+            // During TitleMenu, only tint if the player GameObject is active.
+            // The persistent player is inactive while the title screen is showing,
+            // but becomes active during the CA spawn transition — exactly the window
+            // we want to cover so the spawn animation isn't vanilla.
+            if (activeScene == "TitleMenu")
+            {
+                var player = GamePlayCore.Instance?.player;
+                if (player == null) return false;
+                if (!player.gameObject.activeInHierarchy) return false;
+            }
+
+            return true;
+        }
 
         public static void Apply()
         {
@@ -37,6 +74,7 @@ namespace RubiniteDarkRuby
             {
                 if (sr.name != "Girl") continue;
                 if (sr.material == null) continue;
+                if (!ShouldApplyToRenderer(sr)) continue;
                 if (sr.material.name.StartsWith(MaterialName)) continue;
                 ApplyToRenderer(sr);
             }
@@ -44,9 +82,16 @@ namespace RubiniteDarkRuby
 
         public static void ApplyToRenderer(SpriteRenderer sr)
         {
-            if (sr == null || sr.material == null) return;
-            if (sr.material.name.StartsWith(MaterialName)) return;
+                if (sr == null || sr.material == null) return;
+                if (!ShouldApplyToRenderer(sr)) return;
 
+                if (sr.material.name.StartsWith(MaterialName))
+                {
+                    EnsureEnforcer(sr);
+                    return;
+                }
+
+            var previousName = sr.material.name;
             var mat = new Material(sr.material);
             mat.name = MaterialName;
 
@@ -76,9 +121,21 @@ namespace RubiniteDarkRuby
             mat.EnableKeyword("GRADIENTCOLORRAMP_ON");
 
             sr.material = mat;
-            RubiniteDarkRubyPlugin.Log?.LogInfo(
-                "Dark Ruby skin applied to '" + sr.name
-                + "' (renderer scene: " + sr.gameObject.scene.name + ")");
+            EnsureEnforcer(sr);
+
+            if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+            {
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "Dark Ruby skin: '" + previousName + "' -> '" + MaterialName
+                    + "' on '" + sr.name + "' (scene: " + sr.gameObject.scene.name + ")");
+            }
+        }
+
+        /// <summary>Adds the render-time enforcer component if not already present.</summary>
+        private static void EnsureEnforcer(SpriteRenderer sr)
+        {
+            if (sr.GetComponent<DarkRubyMaterialEnforcer>() != null) return;
+            sr.gameObject.AddComponent<DarkRubyMaterialEnforcer>();
         }
 
         /// <summary>
@@ -105,25 +162,10 @@ namespace RubiniteDarkRuby
             var player = GamePlayCore.Instance?.player;
             if (player != null)
             {
-                foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+                foreach (var enforcer in player.GetComponentsInChildren<DarkRubyMaterialEnforcer>(true))
                 {
-                    if (sr.name != "Girl") continue;
-                    if (sr.material == null) continue;
-                    if (!sr.material.name.StartsWith(MaterialName)) continue;
-
-                    var vanilla = sr.sharedMaterial;
-                    if (vanilla != null && !vanilla.name.StartsWith(MaterialName))
-                    {
-                        sr.material = vanilla;
-                        RubiniteDarkRubyPlugin.Log?.LogInfo(
-                            "Dark Ruby skin: reset material on renderer to '" + vanilla.name + "'");
-                    }
-                    else
-                    {
-                        RubiniteDarkRubyPlugin.Log?.LogWarning(
-                            "Dark Ruby skin: cannot reset material — sharedMaterial is null or Dark Ruby. "
-                            + "Vanilla material may need capture at apply time.");
-                    }
+                    if (enforcer != null)
+                        UnityEngine.Object.Destroy(enforcer);
                 }
             }
 

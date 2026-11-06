@@ -21,6 +21,9 @@ namespace RubiniteDarkRuby
 
         private Harmony _harmony;
 
+        private static int _lastBeforeRenderFrame = -1;
+        private static int _lastPreRenderFrame = -1;
+
         private void Awake()
         {
             Instance = this;
@@ -32,6 +35,12 @@ namespace RubiniteDarkRuby
             State = DarkRubyState.Load();
 
             Module = new DarkRubyModule(this);
+            
+            Logger.LogInfo("Registering Camera.onPreRender hook");
+            Camera.onPreRender += OnCameraPreRender;
+
+            Logger.LogInfo("Registering Application.onBeforeRender hook");
+            Application.onBeforeRender += OnApplicationBeforeRender;
 
             _harmony = new Harmony(Guid);
             try
@@ -64,6 +73,24 @@ namespace RubiniteDarkRuby
         {
             try { _harmony?.UnpatchSelf(); } catch { }
             Instance = null;
+            Camera.onPreRender -= OnCameraPreRender;
+            Application.onBeforeRender -= OnApplicationBeforeRender;
+        }
+
+        private static void OnCameraPreRender(Camera cam)
+        {
+            if (Time.frameCount == _lastPreRenderFrame) return;
+            _lastPreRenderFrame = Time.frameCount;
+            try { Instance?.Module?.PreRenderSkinApply(); }
+            catch (Exception ex) { Log?.LogWarning("PreRenderSkinApply: " + ex.Message); }
+        }
+        
+        private static void OnApplicationBeforeRender()
+        {
+            if (Time.frameCount == _lastBeforeRenderFrame) return;
+            _lastBeforeRenderFrame = Time.frameCount;
+            try { Instance?.Module?.PreRenderSkinApply(); }
+            catch (System.Exception ex) { Log?.LogWarning("PreRenderSkinApply (BeforeRender): " + ex.Message); }
         }
     }
 }
