@@ -12,101 +12,106 @@
     <NoWarn>CS0618</NoWarn>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <BepInExDir>..\..\BepInEx\core\</BepInExDir>
+    <ManagedDir>..\..\Rubinite_Data\Managed\</ManagedDir>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="BepInEx">
-      <HintPath>..\..\BepInEx\core\BepInEx.dll</HintPath>
+      <HintPath>$(BepInExDir)BepInEx.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="0Harmony">
-      <HintPath>..\..\BepInEx\core\0Harmony.dll</HintPath>
+      <HintPath>$(BepInExDir)0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp">
-      <HintPath>..\..\Rubinite_Data\Managed\Assembly-CSharp.dll</HintPath>
+      <HintPath>$(ManagedDir)Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="PugTool">
-      <HintPath>..\..\Rubinite_Data\Managed\PugTool.dll</HintPath>
+      <HintPath>$(ManagedDir)PugTool.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.IMGUIModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.InputLegacyModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UI">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.UI.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.UI.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Unity.TextMeshPro">
-      <HintPath>..\..\Rubinite_Data\Managed\Unity.TextMeshPro.dll</HintPath>
+      <HintPath>$(ManagedDir)Unity.TextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
-      <HintPath>..\..\Rubinite_Data\Managed\Newtonsoft.Json.dll</HintPath>
+      <HintPath>$(ManagedDir)Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.PhysicsModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.PhysicsModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.Physics2DModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.Physics2DModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.Physics2DModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.AnimationModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.AnimationModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.AnimationModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ImageConversionModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.ImageConversionModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.ImageConversionModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.TextRenderingModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="RubyTextMeshPro">
-      <HintPath>..\..\Rubinite_Data\Managed\RubyTextMeshPro.dll</HintPath>
+      <HintPath>$(ManagedDir)RubyTextMeshPro.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.VideoModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.VideoModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.VideoModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Assembly-CSharp-firstpass">
-      <HintPath>..\..\Rubinite_Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
+      <HintPath>$(ManagedDir)Assembly-CSharp-firstpass.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ParticleSystemModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.ParticleSystemModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.ParticleSystemModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ParticleSystemModule">
-      <HintPath>..\..\Rubinite_Data\Managed\Cinemachine.dll</HintPath>
+      <HintPath>$(ManagedDir)Cinemachine.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ParticleSystemModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.DirectorModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.DirectorModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.ParticleSystemModule">
-      <HintPath>..\..\Rubinite_Data\Managed\Unity.Timeline.dll</HintPath>
+      <HintPath>$(ManagedDir)Unity.Timeline.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="UnityEngine.UIModule">
-      <HintPath>..\..\Rubinite_Data\Managed\UnityEngine.UIModule.dll</HintPath>
+      <HintPath>$(ManagedDir)UnityEngine.UIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
