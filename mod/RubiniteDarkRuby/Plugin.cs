@@ -35,9 +35,6 @@ namespace RubiniteDarkRuby
             State = DarkRubyState.Load();
 
             Module = new DarkRubyModule(this);
-            
-            Logger.LogInfo("Registering Camera.onPreRender hook");
-            Camera.onPreRender += OnCameraPreRender;
 
             Logger.LogInfo("Registering Application.onBeforeRender hook");
             Application.onBeforeRender += OnApplicationBeforeRender;
@@ -63,17 +60,10 @@ namespace RubiniteDarkRuby
             catch (Exception ex) { Logger.LogWarning("Module.Tick: " + ex.Message); }
         }
 
-        private void LateUpdate()
-        {
-            try { Module?.LateTick(); }
-            catch (Exception ex) { Logger.LogWarning("Module.LateTick: " + ex.Message); }
-        }
-
         private void OnDestroy()
         {
             try { _harmony?.UnpatchSelf(); } catch { }
             Instance = null;
-            Camera.onPreRender -= OnCameraPreRender;
             Application.onBeforeRender -= OnApplicationBeforeRender;
         }
 

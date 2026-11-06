@@ -32,19 +32,4 @@ namespace RubiniteDarkRuby.Patches
             DarkRubySkin.ApplyToRenderer(sr);
         }
     }
-
-    [HarmonyPatch(typeof(SpriteRenderer), "set_sprite")]
-    internal static class SpriteRendererSetSpritePatch
-    {
-        private static void Postfix(SpriteRenderer __instance)
-        {
-            if (!DarkRubySkin.IsActive) return;
-            if (__instance == null) return;
-            if (__instance.gameObject.name != "Girl") return;
-            if (!DarkRubySkin.ShouldApplyToRenderer(__instance)) return;
-            if (__instance.material == null) return;
-            if (__instance.material.name.StartsWith(DarkRubySkin.MaterialName)) return;
-            DarkRubySkin.ApplyToRenderer(__instance);
-        }
-    }
 }

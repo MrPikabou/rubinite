@@ -64,32 +64,6 @@ namespace RubiniteDarkRuby
         }
 
         /// <summary>
-        /// Runs after all game Update() and animation work. Re-applies the Dark Ruby material
-        /// whenever the game has rebuilt the player renderer via ChangeRubySkin.ChangeSkin().
-        /// </summary>
-        public void LateTick()
-        {
-            if (!_plugin.Settings.EnableMod.Value) return;
-            if (!DarkRubySkin.IsActive) return;
-
-            var scene = SceneManager.GetActiveScene().name;
-            if (scene == "TitleMenu") return;
-            if (scene != "ChallengeArea" && scene != "DarkRubyLevel") return;
-
-            var player = GamePlayCore.Instance?.player;
-            if (player == null) return;
-
-            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
-            {
-                if (sr.name != "Girl") continue;
-                if (sr.material == null) continue;
-                if (sr.material.name.StartsWith(DarkRubySkin.MaterialName)) continue;
-                if (sr.gameObject.scene.name == "TitleMenu") continue;
-                DarkRubySkin.ApplyToRenderer(sr);
-            }
-        }
-
-        /// <summary>
         /// Runs from Camera.onPreRender — after every Update, LateUpdate, and Animator
         /// tick, but before the frame is drawn. Re-applies the Dark Ruby material so a
         /// per-frame material override (animator track, cutscene rebuild) never reaches
