@@ -22,6 +22,7 @@ namespace RubiniteDarkRuby
         public int LastFightRankIndex = -1;   // 0=S, 1=A, 2=B, 3=C, -1=unknown
 
         public bool SkinSelected;
+        public string LastVanillaSkinId;
 
         [JsonIgnore]
         public string FilePath;

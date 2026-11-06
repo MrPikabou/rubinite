@@ -44,7 +44,6 @@ namespace RubiniteDarkRuby
                 if (Input.GetKeyDown(KeyCode.F11)) RespawnPodium();
             }
 
-            // Skin handling — works in CA and in the boss arena, but NOT in the title menu
             if (scene == "ChallengeArea" || scene == "DarkRubyLevel")
             {
                 if (Input.GetKeyDown(KeyCode.F9)) DarkRubySkin.Toggle();
@@ -62,10 +61,8 @@ namespace RubiniteDarkRuby
         }
 
         /// <summary>
-        /// Runs after all game Update() and animation work. Re-applies the DR material
+        /// Runs after all game Update() and animation work. Re-applies the Dark Ruby material
         /// whenever the game has rebuilt the player renderer via ChangeRubySkin.ChangeSkin().
-        /// This catches the "skin snaps back to vanilla during cutscenes / wakeup animation"
-        /// case that the Update-based check misses.
         /// </summary>
         public void LateTick()
         {
@@ -84,6 +81,7 @@ namespace RubiniteDarkRuby
                 if (sr.name != "Girl") continue;
                 if (sr.material == null) continue;
                 if (sr.material.name.StartsWith(DarkRubySkin.MaterialName)) continue;
+                if (sr.gameObject.scene.name == "TitleMenu") continue;
                 DarkRubySkin.ApplyToRenderer(sr);
             }
         }

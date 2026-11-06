@@ -1,18 +1,12 @@
+using PugTool.Unity.Singleton;
 using UnityEngine;
 
 namespace RubiniteDarkRuby
 {
-    /// <summary>
-    /// Applies the custom Dark Ruby character skin (hardcoded material swap).
-    /// Selection is persisted in DarkRubyState.SkinSelected. The skin only takes
-    /// effect when explicitly selected — default is vanilla.
-    /// </summary>
     internal static class DarkRubySkin
     {
         public const string MaterialName = "HardcodedDarkRubyMaterial";
 
-        // Color-change slots derived from the in-game Dark Ruby character material.
-        // Each tuple: target RGBA, replacement RGBA, tolerance.
         private static readonly (float tr, float tg, float tb, float ta,
                                  float nr, float ng, float nb, float na, float tol)[] ColorSlots = new[]
         {
@@ -31,10 +25,8 @@ namespace RubiniteDarkRuby
         public static bool IsActive =>
             RubiniteDarkRubyPlugin.Instance?.State?.SkinSelected ?? false;
 
-        /// <summary>
-        /// Applies the Dark Ruby skin to every "Girl" renderer on the player.
-        /// Idempotent — renderers already using our material are skipped.
-        /// </summary>
+        private const string FallbackVanillaSkinId = "eb9dd477-a430-48f8-8a7d-f721ea740a08";
+
         public static void Apply()
         {
             var player = GamePlayCore.Instance?.player;
@@ -49,7 +41,6 @@ namespace RubiniteDarkRuby
             }
         }
 
-        /// <summary>Apply the Dark Ruby material to a single renderer. Skips if already applied.</summary>
         public static void ApplyToRenderer(SpriteRenderer sr)
         {
             if (sr == null || sr.material == null) return;
@@ -85,32 +76,51 @@ namespace RubiniteDarkRuby
 
             sr.material = mat;
             RubiniteDarkRubyPlugin.Log?.LogInfo(
-                "Dark Ruby skin material applied to '" + sr.name
-                + "' (scene: " + sr.gameObject.scene.name + ")");
+                "DR skin applied to '" + sr.name
+                + "' (renderer scene: " + sr.gameObject.scene.name + ")");
         }
 
         /// <summary>
-        /// Forces the game to rebuild the character skin from GameSetting.rubySkinID,
-        /// which effectively reverts to whatever vanilla color was last selected.
+        /// Restores the vanilla skin. Sets GameSetting.rubySkinID first so the
+        /// game's ChangeSkin knows which color to rebuild.
         /// </summary>
         public static void RevertToVanilla()
         {
-            var skins = Object.FindObjectsOfType<ChangeRubySkin>();
-            foreach (var skin in skins)
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
+            var targetId = state?.LastVanillaSkinId;
+            if (string.IsNullOrEmpty(targetId)) targetId = FallbackVanillaSkinId;
+
+            if (GameSetting.Instance?.rubySkinID != null)
+                GameSetting.Instance.rubySkinID.SetValue(targetId, "RubiniteDarkRuby");
+
+            var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            if (itemOverview?.currentSkinIDFlag != null)
+                itemOverview.currentSkinIDFlag.SetValue(targetId, "RubiniteDarkRuby");
+
+            foreach (var skin in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
             {
                 if (skin != null) skin.ChangeSkin();
             }
-            RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby skin reverted to vanilla skin.");
+
+            RubiniteDarkRubyPlugin.Log?.LogInfo(
+                "DR skin reverted to vanilla (" + targetId + ")");
         }
 
-        /// <summary>
-        /// Flips the persisted selection and applies/reverts accordingly.
-        /// Called from F9 (debug) and, in Phase 3, from the inventory skin menu.
-        /// </summary>
         public static void Toggle()
         {
             var state = RubiniteDarkRubyPlugin.Instance?.State;
             if (state == null) return;
+
+            if (!state.SkinSelected)
+            {
+                var current = GameSetting.Instance?.rubySkinID?.GetValue();
+                if (!string.IsNullOrEmpty(current))
+                {
+                    state.LastVanillaSkinId = current;
+                    RubiniteDarkRubyPlugin.Log?.LogInfo(
+                        "DR skin: captured vanilla color as '" + current + "'");
+                }
+            }
 
             state.SkinSelected = !state.SkinSelected;
             state.Save();
@@ -118,12 +128,12 @@ namespace RubiniteDarkRuby
             if (state.SkinSelected)
             {
                 Apply();
-                RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby skin: ENABLED");
+                RubiniteDarkRubyPlugin.Log?.LogInfo("DR skin: ENABLED");
             }
             else
             {
                 RevertToVanilla();
-                RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby skin: DISABLED");
+                RubiniteDarkRubyPlugin.Log?.LogInfo("DR skin: DISABLED");
             }
         }
     }
