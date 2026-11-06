@@ -1758,6 +1758,18 @@ namespace RubiniteAP
             }
         }
 
+        public void FixReturnPortal()
+        {
+            if (GameSetting.Instance == null) return;
+
+            if (!string.IsNullOrEmpty(_lastPortalLevel))
+            {
+                GameSetting.Instance.playerLastScene.SetValue(_lastPortalLevel, "RubiniteAP");
+                GameSetting.Instance.playerLastLeaveScene.SetValue(_lastPortalLevel, "RubiniteAP");
+                AddLog($"Exit fix: Forced return scene to portal '{_lastPortalLevel}'");
+            }
+        }
+
         private Sprite GetSkillIcon(SkillTreeData tree)
         {
             if (tree == null || string.IsNullOrEmpty(tree.DisplayName)) return null;
@@ -1938,6 +1950,8 @@ namespace RubiniteAP
                 try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
                 catch (Exception ex) { AddLog("Could not persist dust after boss: " + ex.Message); }
             }
+
+            FixReturnPortal();
         }
 
         public static string GetTargetLevel(OnEnableLoadLevel component)
@@ -2170,10 +2184,16 @@ namespace RubiniteAP
             }
 
             var core = GetGamePlayCore();
-            int dustBefore = -1;
             if (core?.dust != null && price > 0)
             {
-                dustBefore = core.dust.GetValue();
+                int dustBefore = core.dust.GetValue();
+                
+                if (dustBefore < price)
+                {
+                    AddLog($"Purchase failed: Not enough dust ({dustBefore}/{price}) for '{locName}'");
+                    return false;
+                }
+
                 core.dust.SetValue(dustBefore - price, "RubiniteAP SkillTreePurchase");
                 AddLog($"Skill tree cost: -{price} ({dustBefore} -> {core.dust.GetValue()})");
             }
@@ -2181,11 +2201,8 @@ namespace RubiniteAP
             if (core?.dust != null && GameSetting.Instance?.dustFlag != null
                 && core.dust != GameSetting.Instance.dustFlag)
             {
-                AddLog($"WARNING: core.dust != GameSetting.dustFlag (core={core.dust.GetValue()}, setting={GameSetting.Instance.dustFlag.GetValue()}). Syncing to core.");
                 GameSetting.Instance.dustFlag.SetValue(core.dust.GetValue(), "RubiniteAP");
             }
-
-            AddLog("Skill tree purchase: '" + locName + "'");
 
             var ids = new List<long> { locId };
             State.AddChecked(ids);
@@ -3241,10 +3258,20 @@ namespace RubiniteAP
 
         internal bool IsBossUnlockedPublic(BossInfo boss)
         {
-            // We ONLY check the Sigil here (IsBossUnlocked). 
-            // This determines if the portal icon is grayed out or not.
-            // The Goal Boss Kill requirement is handled separately in the tooltip text.
-            return IsBossUnlocked(boss, boss.Level);
+            // Find which portal actually leads to this boss (handles boss shuffle)
+            string portalLevel = GetPortalLevelForBoss(boss.Level);
+            
+            // Check if we have the Sigil required for THAT specific portal
+            return IsBossUnlocked(boss, portalLevel);
+        }
+
+        public string GetPortalLevelForBoss(string bossLevel)
+        {
+            foreach (var kv in _bossSceneMap)
+            {
+                if (kv.Value == bossLevel) return kv.Key;
+            }
+            return bossLevel;
         }
 
         public bool IsCheckEnabled(string levelName, int checkIndex)
