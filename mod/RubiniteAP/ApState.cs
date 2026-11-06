@@ -23,6 +23,8 @@ namespace RubiniteAP
         public float LastDarkRubyFightTime;
         public bool LastDarkRubyRankAchieved;
 
+        public int DeathsSinceLastSend = 0;
+
         [JsonIgnore]
         public string FilePath;
 

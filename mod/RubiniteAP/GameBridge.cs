@@ -121,10 +121,11 @@ namespace RubiniteAP
 
         private bool _seedHasDeathLink;
         private int _deathLinkAmnesty;
-        private int _deathsSinceLastSend;
         private int _lastKnownPlayerHp = -1;
         private bool _playerDeathFired;
         private System.Reflection.MethodInfo _playerKillMethod;
+        public int DeathsSinceLastSend => State.DeathsSinceLastSend;
+        public int DeathLinkAmnesty => _deathLinkAmnesty;
         
         private static System.Reflection.MethodInfo _getLevelNameMethod;
         private static bool _getLevelNameMethodSearched;
@@ -492,7 +493,6 @@ namespace RubiniteAP
             State.AddChecked(info.CheckedLocations);
             State.Save();
 
-            _deathsSinceLastSend = 0;
             _lastKnownPlayerHp = -1;
             _playerDeathFired = false;
             _playerKillMethod = null;
@@ -3108,7 +3108,9 @@ namespace RubiniteAP
                 AddLog("Local player killed by DeathLink.");
                 _lastKnownPlayerHp = -1;
                 _playerDeathFired = false;
-                _deathsSinceLastSend = 0;
+
+                State.DeathsSinceLastSend = 0;
+                State.Save();
             }
             else
             {
@@ -3170,17 +3172,20 @@ namespace RubiniteAP
 
         private void OnLocalPlayerDied()
         {
-            _deathsSinceLastSend++;
-            if (DeathLinkActive && _deathsSinceLastSend > _deathLinkAmnesty)
+            State.DeathsSinceLastSend++;
+
+            if (DeathLinkActive && State.DeathsSinceLastSend >= _deathLinkAmnesty)
             {
                 Client.SendDeathLink("died in " + SceneManager.GetActiveScene().name);
-                AddLog("DeathLink sent (" + _deathsSinceLastSend + " deaths).");
-                _deathsSinceLastSend = 0;
+                AddLog("DeathLink sent (" + State.DeathsSinceLastSend + " deaths).");
+                State.DeathsSinceLastSend = 0;
             }
             else
             {
-                AddLog("Death forgiven (" + _deathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
+                AddLog("Death forgiven (" + State.DeathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
             }
+            
+            State.Save();
         }
 
          public string GetPlayerName(int slot)

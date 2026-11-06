@@ -46,6 +46,14 @@ namespace RubiniteAP
         public bool IsUserEnabled => _userEnabled;
         public bool IsActuallyVisible { get; private set; }
 
+        private GameObject _deathLinkCounterPanel;
+        private TextMeshProUGUI _deathLinkCounterText;
+        private CanvasGroup _deathLinkCounterCanvasGroup;
+
+        private float _deathLinkTimer = -1f;
+        private bool _wasDead = false;
+        private const float DeathLinkCounterHoldTime = 3f;
+
         private sealed class ToastEntry
         {
             public GameObject Root;
@@ -83,6 +91,7 @@ namespace RubiniteAP
             CreatePausePanel();
             CreateSigilTracker();
             CreateTooltip();
+            CreateDeathLinkCounter();
 
             _lastReceivedCount = bridge.GetReceivedHistory().Count;
             _lastSentCount = bridge.GetSentHistory().Count();
@@ -370,6 +379,54 @@ namespace RubiniteAP
             _tooltipPanel.SetActive(false);
         }
 
+        private void CreateDeathLinkCounter()
+        {
+            _deathLinkCounterPanel = new GameObject("AP_DeathLinkCounter");
+            _deathLinkCounterPanel.transform.SetParent(_canvas.transform, false);
+            _deathLinkCounterCanvasGroup = _deathLinkCounterPanel.AddComponent<CanvasGroup>();
+
+            var bgImg = _deathLinkCounterPanel.AddComponent<Image>();
+            
+            var nativeBg = _bridge.FindSpriteByName("UI_SkillBook_Frame_Info_Paper_main");
+            if (nativeBg != null)
+            {
+                bgImg.sprite = nativeBg;
+                bgImg.type = Image.Type.Sliced;
+                bgImg.color = Color.white;
+            }
+            else
+            {
+                bgImg.sprite = _panelSprite;
+                bgImg.type = Image.Type.Sliced;
+                bgImg.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+            }
+
+            var rt = _deathLinkCounterPanel.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0, 1);
+            rt.anchorMax = new Vector2(0, 1);
+            rt.pivot = new Vector2(0, 1);
+            rt.anchoredPosition = new Vector2(30f, -30f);
+            rt.sizeDelta = new Vector2(350f, 60f);
+
+            var textGo = new GameObject("Text");
+            textGo.transform.SetParent(_deathLinkCounterPanel.transform, false);
+            _deathLinkCounterText = textGo.AddComponent<TextMeshProUGUI>();
+            if (_gameFont != null) _deathLinkCounterText.font = _gameFont;
+            _deathLinkCounterText.fontSize = 22;
+            _deathLinkCounterText.fontStyle = FontStyles.Bold;
+            _deathLinkCounterText.alignment = TextAlignmentOptions.Center;
+            
+            _deathLinkCounterText.color = new Color32(80, 50, 30, 255); 
+
+            var textRt = textGo.GetComponent<RectTransform>();
+            textRt.anchorMin = Vector2.zero;
+            textRt.anchorMax = Vector2.one;
+            textRt.offsetMin = Vector2.zero;
+            textRt.offsetMax = Vector2.zero;
+
+            _deathLinkCounterPanel.SetActive(false);
+        }
+
         private void Update()
         {
             if (_bridge == null) return;
@@ -377,9 +434,60 @@ namespace RubiniteAP
             UpdateVisibility();
 
             bool isPaused = IsPauseMenuOpen();
-            
+            bool isDead = !_bridge.IsPlayerAlive();
+
             _pausePanel.SetActive(isPaused);
             _trackerPanel.SetActive(isPaused);
+
+            if (isPaused)
+            {
+                _deathLinkCounterPanel.SetActive(true);
+                _deathLinkCounterCanvasGroup.alpha = 1f;
+            }
+            else if (isDead)
+            {
+                if (!_wasDead)
+                {
+                    _deathLinkTimer = Time.unscaledTime;
+                    _wasDead = true;
+                }
+
+                float age = Time.unscaledTime - _deathLinkTimer;
+                if (age < DeathLinkCounterHoldTime)
+                {
+                    _deathLinkCounterPanel.SetActive(true);
+                    
+                    if (age > DeathLinkCounterHoldTime - ToastFadeTime)
+                        _deathLinkCounterCanvasGroup.alpha = 1f - (age - (DeathLinkCounterHoldTime - ToastFadeTime)) / ToastFadeTime;
+                    else
+                        _deathLinkCounterCanvasGroup.alpha = 1f;
+                }
+                else
+                {
+                    _deathLinkCounterPanel.SetActive(false);
+                }
+            }
+            else
+            {
+                _wasDead = false;
+                _deathLinkCounterPanel.SetActive(false);
+            }
+
+            if (_deathLinkCounterPanel.activeSelf)
+            {
+                if (_bridge.DeathLinkAmnesty <= 0)
+                {
+                    _deathLinkCounterText.text = "DeathLink disabled (Amnesty 0)";
+                }
+                else
+                {
+                    int remaining = _bridge.DeathLinkAmnesty - _bridge.DeathsSinceLastSend;
+                    if (remaining <= 0)
+                        _deathLinkCounterText.text = "<color=#8b3636>Next death triggers DeathLink!</color>";
+                    else
+                        _deathLinkCounterText.text = $"DeathLink in {remaining} death(s)";
+                }
+            }
 
             if (isPaused)
             {
