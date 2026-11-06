@@ -7,6 +7,8 @@ namespace RubiniteDarkRuby.Patches
     {
         private static bool Prefix(CutSceneController __instance)
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return true;
+
             var module = RubiniteDarkRubyPlugin.Instance?.Module;
             if (module == null) return true;
 
@@ -24,12 +26,20 @@ namespace RubiniteDarkRuby.Patches
     [HarmonyPatch(typeof(GamePlayCore), "EnterCutSceneMode")]
     internal static class EnterCutSceneModePatch
     {
-        private static void Postfix() => RubiniteDarkRubyPlugin.Instance?.Module?.OnDarkRubyEnterCutScene();
+        private static void Postfix()
+        {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
+            RubiniteDarkRubyPlugin.Instance?.Module?.OnDarkRubyEnterCutScene();
+        }
     }
 
     [HarmonyPatch(typeof(GamePlayCore), "ExitCutSceneMode")]
     internal static class ExitCutSceneModePatch
     {
-        private static void Postfix() => RubiniteDarkRubyPlugin.Instance?.Module?.OnDarkRubyExitCutScene();
+        private static void Postfix()
+        {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
+            RubiniteDarkRubyPlugin.Instance?.Module?.OnDarkRubyExitCutScene();
+        }
     }
 }

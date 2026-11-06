@@ -7,6 +7,8 @@ namespace RubiniteDarkRuby.Patches
     {
         private static void Prefix(LevelManager __instance)
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
+
             var module = RubiniteDarkRubyPlugin.Instance?.Module;
             if (module == null || __instance == null) return;
             if (__instance.gameObject.scene.name != "ChallengeArea") return;
@@ -26,6 +28,8 @@ namespace RubiniteDarkRuby.Patches
 
         private static void Postfix(LevelManager __instance)
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
+            
             var module = RubiniteDarkRubyPlugin.Instance?.Module;
             if (module == null || __instance == null) return;
             var scene = __instance.gameObject.scene.name;

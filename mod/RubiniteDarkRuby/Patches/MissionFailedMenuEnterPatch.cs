@@ -7,6 +7,8 @@ namespace RubiniteDarkRuby.Patches
     {
         private static void Postfix(MissionFailedMenu __instance)
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
+            
             var module = RubiniteDarkRubyPlugin.Instance?.Module;
             if (module == null) return;
 

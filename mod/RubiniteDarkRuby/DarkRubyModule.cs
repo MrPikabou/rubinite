@@ -33,6 +33,14 @@ namespace RubiniteDarkRuby
 
         public void Tick()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone && _cachedPodium != null)
+            {
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "AP run became active — removing standalone DR podium");
+                UnityEngine.Object.Destroy(_cachedPodium);
+                _cachedPodium = null;
+            }
+
             if (!_plugin.Settings.EnableMod.Value) return;
 
             if (_plugin.Settings.LogSkinDiagnostics.Value)
@@ -122,6 +130,7 @@ namespace RubiniteDarkRuby
 
         public void OnChallengeAreaReturned()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
             _darkRubyInProgress = false;
         }
 
@@ -312,6 +321,8 @@ namespace RubiniteDarkRuby
 
         public void OnDarkRubyStorySceneIntercepted()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) return;
+            
             var lm = GamePlayCore.Instance?.levelManager;
             if (lm == null) return;
 
@@ -388,6 +399,7 @@ namespace RubiniteDarkRuby
 
         public IEnumerator TeleportPlayerToDarkRubyPodium()
         {
+            if (ApBridgeHook.ShouldSuppressStandalone) yield break;
             yield return null;
 
             var core = GamePlayCore.Instance;
