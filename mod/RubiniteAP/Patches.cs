@@ -1120,14 +1120,14 @@ namespace RubiniteAP
             if (lm?.levelData?.DisplayName != "DarkRubyLevel") return true;
 
             bridge.LastDarkRubyCutsceneName = __instance?.name;
-            bridge.AddLog($"Dark Ruby: CutScene startet '{__instance?.name}'");
+            bridge.AddLog($"Dark Ruby: cutscene started '{__instance?.name}'");
 
             bool bossDead = lm.boss != null && lm.boss.isDead;
             bool winMenuOpen = MenuCore.Instance?.currentMenu == GamePlayCore.Instance?.challengeWinMenu;
 
             if ((bossDead && bridge.DarkRubyDeathHandled) || winMenuOpen)
             {
-                bridge.AddLog($"Dark Ruby: blocked CutSceneController.StartCutScene ('{__instance?.name}')");
+                bridge.AddLog($"Dark Ruby: blocked cutscene '{__instance?.name}'");
                 return false;
             }
 

@@ -176,7 +176,7 @@ namespace RubiniteAP
             while (_actions.TryDequeue(out var action))
             {
                 try { action(); }
-                catch (Exception ex) { LogLine("Client error: " + ex.Message); }
+                catch (Exception ex) { LogLine("Client error: " + ex); }
             }
         }
 
@@ -660,7 +660,8 @@ namespace RubiniteAP
                 if (_pendingScoutLocations == null)
                     _pendingScoutLocations = new List<long>();
                 _pendingScoutLocations.AddRange(list);
-                Enqueue(() => LogLine("Queued " + list.Count + " scouts (" + _pendingScoutLocations.Count + " total) until DataPackage arrives."));
+                int total = _pendingScoutLocations.Count;
+                Enqueue(() => LogLine("Queued " + list.Count + " scouts (" + total + " total) until DataPackage arrives."));
             }
         }
 

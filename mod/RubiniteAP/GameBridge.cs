@@ -902,7 +902,7 @@ namespace RubiniteAP
         {
             if (string.IsNullOrEmpty(message)) return;
             _messageCount++;
-            var formatted = DateTime.Now.ToString("HH:mm:ss") + "  " + message;
+            var formatted = DateTime.Now.ToString("HH:mm:ss") + "  [AP] " + message;
             LogLines.Add(formatted);
             if (LogLines.Count > 200) LogLines.RemoveRange(0, LogLines.Count - 200);
             LogChanged?.Invoke();
@@ -1140,6 +1140,11 @@ namespace RubiniteAP
                     ? InGameHud.ToastDurationMode.Timed
                     : InGameHud.ToastDurationMode.Permanent;
                 AddLog($"HUD duration: {_inGameHud.DurationMode} (HoldTime={_inGameHud.HoldTime}s)");
+            }
+
+            if (Input.GetKeyDown(KeyCode.F12))
+            {
+                DumpMenuHierarchy();
             }
         }
 
@@ -3328,6 +3333,9 @@ namespace RubiniteAP
             }
         }
 
+
+
+
         // TODO DEBUGGING DELETE
         private void DumpAllSprites()
         {
@@ -3373,6 +3381,96 @@ namespace RubiniteAP
             
             AddLog("========================================");
         }
+
+        // TODO DEBUGGING DELETE
+        private void DumpMenuHierarchy()
+        {
+            var menuCore = MenuCore.Instance;
+            if (menuCore == null || menuCore.currentMenu == null)
+            {
+                AddLog("[MENU DUMP] No menu open. Open the menu you want to dump first, then press F12.");
+                return;
+            }
+
+            var menu = menuCore.currentMenu;
+            AddLog("========================================");
+            AddLog("=== MENU HIERARCHY DUMP (F12) ===");
+            AddLog($"Menu class: {menu.GetType().FullName}");
+            AddLog($"GameObject: {menu.gameObject.name}");
+            AddLog("========================================");
+
+            DumpTransform(menu.transform, 0);
+
+            AddLog("========================================");
+            AddLog("=== END MENU DUMP ===");
+            AddLog("========================================");
+        }
+
+        // TODO DEBUGGING DELETE
+        private void DumpTransform(Transform t, int depth)
+        {
+            if (t == null) return;
+            var indent = new string(' ', depth * 2);
+            var go = t.gameObject;
+
+            // Component types on this GameObject
+            var comps = new List<string>();
+            foreach (var c in go.GetComponents<Component>())
+            {
+                if (c != null) comps.Add(c.GetType().Name);
+            }
+
+            AddLog($"{indent}{go.name} [active={go.activeSelf}] {{{string.Join(", ", comps)}}}");
+
+            // Image
+            var img = go.GetComponent<UnityEngine.UI.Image>();
+            if (img != null)
+            {
+                AddLog($"{indent}  Image: sprite='{(img.sprite != null ? img.sprite.name : "<null>")}' color={img.color}");
+            }
+
+            // TMP text
+            var tmp = go.GetComponent<TMPro.TextMeshProUGUI>();
+            if (tmp != null)
+            {
+                AddLog($"{indent}  TMP: text='{tmp.text}'");
+            }
+
+            // Button + onClick listeners
+            var btn = go.GetComponent<UnityEngine.UI.Button>();
+            if (btn != null)
+            {
+                int n = btn.onClick.GetPersistentEventCount();
+                AddLog($"{indent}  Button: onClick has {n} persistent listener(s)");
+                for (int i = 0; i < n; i++)
+                {
+                    var target = btn.onClick.GetPersistentTarget(i);
+                    var method = btn.onClick.GetPersistentMethodName(i);
+                    var targetType = target != null ? target.GetType().Name : "<null>";
+                    var targetName = target is UnityEngine.Object uo ? uo.name : "<non-UnityObject>";
+                    AddLog($"{indent}    [{i}] {targetType}.{method} on '{targetName}'");
+                }
+            }
+
+            // Custom components (script behavior)
+            foreach (var c in go.GetComponents<MonoBehaviour>())
+            {
+                if (c == null) continue;
+                var typeName = c.GetType().Name;
+                // Skip noisy Unity-internal components
+                if (typeName.StartsWith("Image") || typeName.StartsWith("Text")
+                    || typeName.StartsWith("Button") || typeName.StartsWith("Canvas")
+                    || typeName.StartsWith("RectTransform")) continue;
+                AddLog($"{indent}  Script: {typeName}");
+            }
+
+            // Recurse children
+            for (int i = 0; i < t.childCount; i++)
+                DumpTransform(t.GetChild(i), depth + 1);
+        }
+
+
+
 
         private static LevelData FindLevelDataById(LevelDataOverview overview, string id)
         {
