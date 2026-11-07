@@ -88,6 +88,17 @@ namespace RubiniteDarkRuby.Patches
             var state = RubiniteDarkRubyPlugin.Instance?.State;
             if (state != null)
             {
+                if (!state.SkinSelected)
+                {
+                    var current = GameSetting.Instance?.rubySkinID?.GetValue();
+                    if (!string.IsNullOrEmpty(current) && current != "darkruby")
+                    {
+                        state.LastVanillaSkinId = current;
+                        RubiniteDarkRubyPlugin.Log?.LogInfo(
+                            "DR skin: captured vanilla color as '" + current + "'");
+                    }
+                }
+
                 state.SkinSelected = true;
                 state.Save();
             }

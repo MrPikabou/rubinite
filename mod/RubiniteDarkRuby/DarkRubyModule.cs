@@ -64,11 +64,6 @@ namespace RubiniteDarkRuby
                 if (Input.GetKeyDown(KeyCode.F11)) RespawnPodium();
             }
 
-            if (scene == "ChallengeArea" || scene == "DarkRubyLevel")
-            {
-                if (Input.GetKeyDown(KeyCode.F9)) DarkRubySkin.Toggle();
-            }
-
             if (scene != "ChallengeArea") return;
             if (!_plugin.Settings.SpawnPortalInChallengeArea.Value) return;
             EnsurePodiumSpawned();
