@@ -7,6 +7,13 @@ namespace RubiniteDarkRuby
 {
     internal static class DarkRubySkin
     {
+        private static SpriteRenderer _cachedGirlSr;
+        private static Material _drCharacterMaterial;
+        private static Material _drPortraitMaterial;
+        private static int _lastPortraitAttemptFrame = -1;
+        private static int _ddolCheckFrame = -1;
+        private static bool _ddolExists;
+
         public const string MaterialName = "HardcodedDarkRubyMaterial";
         private const string FallbackVanillaSkinId = "eb9dd477-a430-48f8-8a7d-f721ea740a08";
 
@@ -27,6 +34,7 @@ namespace RubiniteDarkRuby
 
         public static bool IsActive =>
             RubiniteDarkRubyPlugin.Instance?.State?.SkinSelected ?? false;
+        public static bool IsVanillaFrameFocused { get; set; } = false;
         
         /// <summary>
         /// Central gate: should the Dark Ruby skin be applied to this specific renderer right now?
@@ -40,22 +48,13 @@ namespace RubiniteDarkRuby
         {
             if (sr == null) return false;
             if (!IsActive) return false;
+            if (IsVanillaFrameFocused) return false;
 
             var activeScene = SceneManager.GetActiveScene().name;
-            var srScene = sr.gameObject.scene.name;
-
-            // Never tint anything actually inside the TitleMenu scene.
-            // The visible title-screen preview lives here.
-            if (srScene == "TitleMenu") return false;
-
-            // Bootstrap frame: skip until GameStartup is done.
             if (activeScene == "GameStartup") return false;
 
-            // During TitleMenu, only tint if the player GameObject is active.
-            // The persistent player is inactive while the title screen is showing,
-            // but becomes active during the CA spawn transition — exactly the window
-            // we want to cover so the spawn animation isn't vanilla.
-            if (activeScene == "TitleMenu")
+            var srScene = sr.gameObject.scene.name;
+            if (srScene == "TitleMenu")
             {
                 var player = GamePlayCore.Instance?.player;
                 if (player == null) return false;
@@ -65,35 +64,164 @@ namespace RubiniteDarkRuby
             return true;
         }
 
+        private static bool HasDdolGirlRenderer()
+        {
+            if (Time.frameCount == _ddolCheckFrame) return _ddolExists;
+            _ddolCheckFrame = Time.frameCount;
+            _ddolExists = false;
+            foreach (var s in UnityEngine.Resources.FindObjectsOfTypeAll<SpriteRenderer>())
+            {
+                if (s == null || s.name != "Girl") continue;
+                if (s.gameObject.scene.name == "DontDestroyOnLoad")
+                {
+                    _ddolExists = true;
+                    break;
+                }
+            }
+            return _ddolExists;
+        }
+
         public static void Apply()
         {
             var player = GamePlayCore.Instance?.player;
-            if (player == null) return;
-
-            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+            if (player != null)
             {
-                if (sr.name != "Girl") continue;
-                if (sr.material == null) continue;
-                if (!ShouldApplyToRenderer(sr)) continue;
-                if (sr.material.name.StartsWith(MaterialName)) continue;
-                ApplyToRenderer(sr);
+                foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+                {
+                    if (sr.name != "Girl") continue;
+                    if (sr.material == null) continue;
+                    if (!ShouldApplyToRenderer(sr)) continue;
+                    if (sr.material.name.StartsWith(MaterialName)) continue;
+                    ApplyToRenderer(sr);
+                }
+            }
+
+            ApplyToPortraits();
+        }
+
+        /// <summary>
+        /// Applies the DR material to every active portrait ChangeRubySkin
+        /// (the character preview in the skin menu). Inactive menus means
+        /// FindObjectsOfType returns nothing — no per-frame cost when the
+        /// skin menu isn't open.
+        /// </summary>
+        public static void ApplyToPortraits()
+        {
+            if (!IsActive) return;
+            if (IsVanillaFrameFocused) return;
+
+            var persistentPlayer = GamePlayCore.Instance?.player;
+            bool playerActive = persistentPlayer != null
+                && persistentPlayer.gameObject.activeInHierarchy;
+
+            foreach (var crs in UnityEngine.Object.FindObjectsOfType<ChangeRubySkin>())
+            {
+                if (crs == null) continue;
+
+                // Skip podium previews
+                var t = crs.transform;
+                bool underPodium = false;
+                while (t != null)
+                {
+                    if (t.GetComponent<ChallengeLevelPoint>() != null) { underPodium = true; break; }
+                    t = t.parent;
+                }
+                if (underPodium) continue;
+
+                var srScene = crs.gameObject.scene.name;
+                bool isTitleScene = srScene == "TitleMenu";
+
+                // Settled title screen: player inactive. Revert any leftover DR material.
+                if (isTitleScene && !playerActive)
+                {
+                    bool wasDR = (crs.image != null && crs.image.material != null
+                                && crs.image.material.name.StartsWith(MaterialName + "_Portrait"))
+                            || (crs.spriteRenderer != null && crs.spriteRenderer.material != null
+                                && crs.spriteRenderer.material.name.StartsWith(MaterialName));
+                    if (wasDR)
+                    {
+                        RestoreVanillaPreview(crs);
+                        RubiniteDarkRubyPlugin.Log?.LogInfo(
+                            "DR preview reverted in title screen");
+                    }
+                    continue;
+                }
+
+                // Image-based ChangeRubySkin (TitleMenu preview, Status portrait, skin-menu)
+                if (crs.image != null)
+                {
+                    ApplyToPortraitImage(crs.image);
+                    continue;
+                }
+
+                if (crs.spriteRenderer == null) continue;
+
+                // SpriteRenderer-based portraits
+                if (crs.isPortrait)
+                {
+                    if (crs.spriteRenderer.material != null
+                        && crs.spriteRenderer.material.name.StartsWith(MaterialName + "_Portrait")) continue;
+                    ApplyToRenderer(crs.spriteRenderer);
+                }
             }
         }
 
-        public static void ApplyToRenderer(SpriteRenderer sr)
+        public static void RestoreVanillaPreview(ChangeRubySkin crs)
         {
-                if (sr == null || sr.material == null) return;
-                if (!ShouldApplyToRenderer(sr)) return;
+            if (crs == null) return;
+            var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
 
-                if (sr.material.name.StartsWith(MaterialName))
+            ItemData item = null;
+            if (overview != null && !string.IsNullOrEmpty(state?.LastVanillaSkinId))
+                item = overview.FindUniqueId(state.LastVanillaSkinId);
+            if (item == null && overview != null)
+                item = overview.FindUniqueId(overview.defaultSkinItem?.Id);
+
+            if (crs.image != null)
+            {
+                var target = item?.skinMaterial_Portrait;
+                if (target == null || target.name.StartsWith(MaterialName))
+                    target = crs.image.defaultMaterial;
+                if (target != null)
+                    crs.image.material = target;
+            }
+
+            if (crs.spriteRenderer != null)
+            {
+                var target = item?.skinMaterial;
+                if (target == null || target.name.StartsWith(MaterialName))
                 {
-                    EnsureEnforcer(sr);
-                    return;
+                    var shared = crs.spriteRenderer.sharedMaterial;
+                    if (shared != null && !shared.name.StartsWith(MaterialName))
+                        target = shared;
                 }
+                if (target != null)
+                    crs.spriteRenderer.material = target;
+            }
+        }
 
-            var previousName = sr.material.name;
-            var mat = new Material(sr.material);
-            mat.name = MaterialName;
+        public static void ApplyToPortraitImage(UnityEngine.UI.Image img)
+        {
+            if (img == null) return;
+            if (!IsActive) return;
+
+            if (img.gameObject.scene.name == "TitleMenu")
+            {
+                var player = GamePlayCore.Instance?.player;
+                if (player == null || !player.gameObject.activeInHierarchy) return;
+            }
+
+            if (img.material != null && img.material.name.StartsWith(MaterialName + "_Portrait")) return;
+
+            var mat = GetOrCreatePortraitMaterial(SingletonScriptableObject<ItemDataOverview>.Instance);
+            if (mat == null) return;
+            img.material = mat;
+        }
+
+        public static void ApplyColorSlotsToMaterial(Material mat)
+        {
+            if (mat == null) return;
 
             for (int i = 0; i < ColorSlots.Length; i++)
             {
@@ -120,15 +248,18 @@ namespace RubiniteDarkRuby
             mat.EnableKeyword("GRADIENT2COL_ON");
             mat.EnableKeyword("GRADIENTCOLORRAMP_ON");
 
+            mat.SetFloat("_ChangeColorBeforeTint", 1f);
+        }
+
+        public static void ApplyToRenderer(SpriteRenderer sr)
+        {
+            if (sr == null || sr.material == null) return;
+            if (!ShouldApplyToRenderer(sr)) return;
+            if (sr.material.name.StartsWith(MaterialName)) { EnsureEnforcer(sr); return; }
+            var mat = GetOrCreateCharacterMaterial();
+            if (mat == null) return;
             sr.material = mat;
             EnsureEnforcer(sr);
-
-            if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
-            {
-                RubiniteDarkRubyPlugin.Log?.LogInfo(
-                    "Dark Ruby skin: '" + previousName + "' -> '" + MaterialName
-                    + "' on '" + sr.name + "' (scene: " + sr.gameObject.scene.name + ")");
-            }
         }
 
         /// <summary>Adds the render-time enforcer component if not already present.</summary>
@@ -144,6 +275,7 @@ namespace RubiniteDarkRuby
         /// </summary>
         public static void RevertToVanilla()
         {
+            ClearCachedMaterials();
             var state = RubiniteDarkRubyPlugin.Instance?.State;
             var targetId = state?.LastVanillaSkinId;
             if (string.IsNullOrEmpty(targetId)) targetId = FallbackVanillaSkinId;
@@ -202,6 +334,219 @@ namespace RubiniteDarkRuby
                 RevertToVanilla();
                 RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby skin: DISABLED");
             }
+        }
+
+        public static Shader GetPlayerShader()
+        {
+            var player = GamePlayCore.Instance?.player;
+            if (player == null) return null;
+            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr.name != "Girl") continue;
+                if (sr.material == null) continue;
+                return sr.material.shader;
+            }
+            return null;
+        }
+
+        public static Material CreateFreshMaterial(Texture texture)
+        {
+            // Build a material with the same DR keywords as the character, but use the
+            // caller-provided texture as _MainTex (so it works for arbitrary sprites,
+            // not just the character atlas).
+            var template = Shader.Find("Sprites/Default");
+            if (template == null) template = Shader.Find("Universal Render Pipeline/2D/Sprite-Lit-Default");
+            if (template == null) return null;
+
+            var mat = new Material(template);
+            mat.name = MaterialName + "_Pigment";
+
+            if (texture != null) mat.SetTexture("_MainTex", texture);
+
+            for (int i = 0; i < ColorSlots.Length; i++)
+            {
+                int slot = i + 1;
+                string suffix = slot == 1 ? "" : slot.ToString();
+                var s = ColorSlots[i];
+                mat.SetColor("_ColorChangeTarget" + suffix, new Color(s.tr, s.tg, s.tb, s.ta));
+                mat.SetColor("_ColorChangeNewCol" + suffix, new Color(s.nr, s.ng, s.nb, s.na));
+                mat.SetFloat("_ColorChangeTolerance" + suffix, s.tol);
+                mat.EnableKeyword("CHANGECOLOR" + slot + "_ON");
+            }
+
+            mat.SetFloat("_ColorChangeLuminosity", 1f);
+            mat.SetFloat("_HsvSaturation", 0f);
+            mat.SetFloat("_HsvBright", 2.0f);
+            mat.EnableKeyword("HSV_ON");
+
+            mat.SetFloat("_GlitchAmount", 5.3f);
+            mat.SetFloat("_GlitchSize", 0.83f);
+            mat.SetFloat("_DistortAmount", 0.5f);
+            mat.SetFloat("_DistortTexXSpeed", 5f);
+            mat.SetFloat("_DistortTexYSpeed", 5f);
+
+            mat.EnableKeyword("GRADIENT2COL_ON");
+            mat.EnableKeyword("GRADIENTCOLORRAMP_ON");
+
+            return mat;
+        }
+
+        public static Material CreateFreshMaterialWithShader(Shader shader, Texture texture)
+        {
+            if (shader == null) return null;
+            var mat = new Material(shader);
+            mat.name = MaterialName + "_Pigment";
+            if (texture != null) mat.SetTexture("_MainTex", texture);
+            
+            for (int i = 0; i < ColorSlots.Length; i++)
+            {
+                int slot = i + 1;
+                string suffix = slot == 1 ? "" : slot.ToString();
+                var s = ColorSlots[i];
+                mat.SetColor("_ColorChangeTarget" + suffix, new Color(s.tr, s.tg, s.tb, s.ta));
+                mat.SetColor("_ColorChangeNewCol" + suffix, new Color(s.nr, s.ng, s.nb, s.na));
+                mat.SetFloat("_ColorChangeTolerance" + suffix, s.tol);
+                mat.EnableKeyword("CHANGECOLOR" + slot + "_ON");
+            }
+
+            mat.SetFloat("_ColorChangeLuminosity", 1f);
+            mat.SetFloat("_HsvSaturation", 0f);
+            mat.SetFloat("_HsvBright", 2.0f);
+            mat.EnableKeyword("HSV_ON");
+
+            mat.SetFloat("_GlitchAmount", 5.3f);
+            mat.SetFloat("_GlitchSize", 0.83f);
+            mat.SetFloat("_DistortAmount", 0.5f);
+            mat.SetFloat("_DistortTexXSpeed", 5f);
+            mat.SetFloat("_DistortTexYSpeed", 5f);
+
+            mat.EnableKeyword("GRADIENT2COL_ON");
+            mat.EnableKeyword("GRADIENTCOLORRAMP_ON");
+
+            return mat;
+        }
+
+        public static void ClearPortraitTints()
+        {
+            foreach (var portrait in UnityEngine.Object.FindObjectsOfType<ChangeRubySkin>())
+            {
+                if (portrait == null || !portrait.isPortrait) continue;
+
+                if (portrait.image != null)
+                {
+                    if (portrait.image.material != null
+                        && portrait.image.material.name.StartsWith(MaterialName + "_Portrait"))
+                    {
+                        portrait.ChangeSkin();
+                    }
+                }
+                else if (portrait.spriteRenderer != null)
+                {
+                    if (portrait.spriteRenderer.material != null
+                        && portrait.spriteRenderer.material.name.StartsWith(MaterialName))
+                    {
+                        portrait.ChangeSkin();
+                    }
+                }
+            }
+        }
+
+        public static SpriteRenderer GetGirlSr()
+        {
+            if (_cachedGirlSr != null) return _cachedGirlSr;
+            var player = GamePlayCore.Instance?.player;
+            if (player == null) return null;
+            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+            {
+                if (sr.name == "Girl") { _cachedGirlSr = sr; return sr; }
+            }
+            return null;
+        }
+
+        public static Material GetOrCreateCharacterMaterial()
+        {
+            if (_drCharacterMaterial != null) return _drCharacterMaterial;
+
+            Shader src = GetGirlSr()?.material?.shader;
+            if (src == null)
+            {
+                foreach (var sr in UnityEngine.Resources.FindObjectsOfTypeAll<SpriteRenderer>())
+                {
+                    if (sr == null || sr.name != "Girl") continue;
+                    if (sr.material == null) continue;
+                    src = sr.material.shader;
+                    break;
+                }
+            }
+            if (src == null) return null;
+
+            var mat = new Material(src);
+            mat.name = MaterialName;
+            ApplyColorSlotsToMaterial(mat);
+            _drCharacterMaterial = mat;
+            return mat;
+        }
+
+        public static Material BuildPortraitMaterial(ItemDataOverview overview)
+        {
+            if (overview == null) return null;
+
+            var defaultItem = overview.FindUniqueId(overview.defaultSkinItem?.Id);
+            if (defaultItem == null) return null;
+
+            Material source = defaultItem.skinMaterial_Portrait;
+            if (source == null || !source.HasProperty("_ColorChangeTarget"))
+                source = defaultItem.skinMaterial;
+
+            if (source == null || !source.HasProperty("_ColorChangeTarget"))
+            {
+                RubiniteDarkRubyPlugin.Log?.LogWarning(
+                    "[Portrait] no usable source. portrait=" 
+                    + (defaultItem.skinMaterial_Portrait?.name ?? "null")
+                    + " skin=" + (defaultItem.skinMaterial?.name ?? "null"));
+                return null;
+            }
+
+            var mat = new Material(source);
+            mat.name = MaterialName + "_Portrait";
+            ApplyColorSlotsToMaterial(mat);
+            return mat;
+        }
+
+        public static Material GetOrCreatePortraitMaterial(ItemDataOverview overview)
+        {
+            if (_drPortraitMaterial != null) return _drPortraitMaterial;
+
+            if (Time.frameCount == _lastPortraitAttemptFrame) return null;
+            _lastPortraitAttemptFrame = Time.frameCount;
+
+            var built = BuildPortraitMaterial(overview);
+            if (built != null) _drPortraitMaterial = built;
+            return built;
+        }
+
+        public static void ForceApplyToRenderer(SpriteRenderer sr)
+        {
+            if (sr == null || sr.material == null) return;
+            if (!IsActive) return;
+            if (sr.material.name.StartsWith(MaterialName))
+            {
+                EnsureEnforcer(sr);
+                return;
+            }
+            var mat = GetOrCreateCharacterMaterial();
+            if (mat == null) return;
+            sr.material = mat;
+            EnsureEnforcer(sr);
+        }
+
+        public static void ClearCachedMaterials()
+        {
+            if (_drCharacterMaterial != null) Object.Destroy(_drCharacterMaterial);
+            if (_drPortraitMaterial != null) Object.Destroy(_drPortraitMaterial);
+            _drCharacterMaterial = null;
+            _drPortraitMaterial = null;
+            _lastPortraitAttemptFrame = -1;
         }
     }
 }

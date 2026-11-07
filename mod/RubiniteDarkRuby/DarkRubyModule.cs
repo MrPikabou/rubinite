@@ -14,6 +14,7 @@ namespace RubiniteDarkRuby
         private readonly RubiniteDarkRubyPlugin _plugin;
         private GameObject _cachedPodium;
         private string _lastScene;
+        private int _lastPreRenderFrame = -1;
 
         private bool _darkRubyInProgress;
         private bool _darkRubyCompleted;
@@ -47,7 +48,14 @@ namespace RubiniteDarkRuby
                 SkinDiagnostics.Poll(Time.frameCount);
 
             var scene = SceneManager.GetActiveScene().name;
-            if (scene != _lastScene) { _lastScene = scene; _cachedPodium = null; }
+            if (scene != _lastScene) 
+            { 
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "[Scene] '" + (_lastScene ?? "<none>") + "' → '" + scene + "'"
+                    + "  DR=" + DarkRubySkin.IsActive);
+                _lastScene = scene; 
+                _cachedPodium = null; 
+            }
 
             if (scene == "ChallengeArea")
             {
@@ -58,12 +66,6 @@ namespace RubiniteDarkRuby
             if (scene == "ChallengeArea" || scene == "DarkRubyLevel")
             {
                 if (Input.GetKeyDown(KeyCode.F9)) DarkRubySkin.Toggle();
-
-                if (DarkRubySkin.IsActive)
-                {
-                    var core = GamePlayCore.Instance;
-                    if (core?.player != null) DarkRubySkin.Apply();
-                }
             }
 
             if (scene != "ChallengeArea") return;
@@ -71,30 +73,29 @@ namespace RubiniteDarkRuby
             EnsurePodiumSpawned();
         }
 
-        /// <summary>
-        /// Runs from Camera.onPreRender — after every Update, LateUpdate, and Animator
-        /// tick, but before the frame is drawn. Re-applies the Dark Ruby material so a
-        /// per-frame material override (animator track, cutscene rebuild) never reaches
-        /// the screen.
-        /// </summary>
         public void PreRenderSkinApply()
         {
             if (!_plugin.Settings.EnableMod.Value) return;
             if (!DarkRubySkin.IsActive) return;
+            if (Time.frameCount == _lastPreRenderFrame) return;
+            _lastPreRenderFrame = Time.frameCount;
 
             var scene = SceneManager.GetActiveScene().name;
-            if (scene == "TitleMenu") return;
-            if (scene != "ChallengeArea" && scene != "DarkRubyLevel") return;
+            if (scene == "GameStartup") return;
+
+            DarkRubySkin.ApplyToPortraits();
 
             var player = GamePlayCore.Instance?.player;
             if (player == null) return;
 
-            foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+            foreach (var sr in UnityEngine.Resources.FindObjectsOfTypeAll<SpriteRenderer>())
             {
-                if (sr.name != "Girl") continue;
+                if (sr == null || sr.name != "Girl") continue;
+                if (!sr.gameObject.scene.IsValid()) continue;
+                if (!sr.gameObject.activeInHierarchy) continue;
                 if (sr.material == null) continue;
                 if (sr.material.name.StartsWith(DarkRubySkin.MaterialName)) continue;
-                DarkRubySkin.ApplyToRenderer(sr);
+                DarkRubySkin.ForceApplyToRenderer(sr);
             }
         }
 
