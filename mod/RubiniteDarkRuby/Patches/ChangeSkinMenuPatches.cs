@@ -49,6 +49,8 @@ namespace RubiniteDarkRuby.Patches
 
             RubiniteDarkRubyPlugin.Log?.LogInfo(
                 "DR skin menu entered with DR active — restored selection state");
+            
+            DarkRubySkin.InvalidateCrsCache();
         }
     }
 
@@ -62,7 +64,8 @@ namespace RubiniteDarkRuby.Patches
             var state = RubiniteDarkRubyPlugin.Instance?.State;
             if (state?.SkinSelected == true)
                 DarkRubySkin.Apply();
-                DarkRubySkin.ApplyToPortraits();
+            
+            DarkRubySkin.InvalidateCrsCache();
         }
     }
 

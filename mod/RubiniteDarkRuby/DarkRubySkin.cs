@@ -13,6 +13,14 @@ namespace RubiniteDarkRuby
         private static int _lastPortraitAttemptFrame = -1;
         private static int _ddolCheckFrame = -1;
         private static bool _ddolExists;
+        
+        private static ChangeRubySkin[] _cachedCrsList;
+        private static int _lastCrsScanFrame = -1;
+        private const int CrsScanInterval = 10;
+
+        private static SpriteRenderer[] _cachedPlayerGirls;
+        private static int _playerGirlsFrame = -1;
+        private const int PlayerGirlsCacheFrames = 30;
 
         public const string MaterialName = "HardcodedDarkRubyMaterial";
         private const string FallbackVanillaSkinId = "eb9dd477-a430-48f8-8a7d-f721ea740a08";
@@ -110,29 +118,34 @@ namespace RubiniteDarkRuby
             if (!IsActive) return;
             if (IsVanillaFrameFocused) return;
 
-            var persistentPlayer = GamePlayCore.Instance?.player;
-            bool playerActive = persistentPlayer != null
-                && persistentPlayer.gameObject.activeInHierarchy;
+            var player = GamePlayCore.Instance?.player;
+            bool playerActive = player != null && player.gameObject.activeInHierarchy;
+            var crsList = GetCachedChangeRubySkins();
 
-            foreach (var crs in UnityEngine.Object.FindObjectsOfType<ChangeRubySkin>())
+            for (int i = 0; i < crsList.Length; i++)
             {
+                var crs = crsList[i];
                 if (crs == null) continue;
 
-                // Skip podium previews
-                var t = crs.transform;
-                bool underPodium = false;
-                while (t != null)
-                {
-                    if (t.GetComponent<ChallengeLevelPoint>() != null) { underPodium = true; break; }
-                    t = t.parent;
-                }
-                if (underPodium) continue;
-
                 var srScene = crs.gameObject.scene.name;
-                bool isTitleScene = srScene == "TitleMenu";
+                bool inCA = srScene == "ChallengeArea";
 
-                // Settled title screen: player inactive. Revert any leftover DR material.
-                if (isTitleScene && !playerActive)
+                // Skip podium previews - only CA-scene has podiums, so only there
+                // do we need the expensive hierarchy walk.
+                if (inCA)
+                {
+                    var t = crs.transform;
+                    bool underPodium = false;
+                    while (t != null)
+                    {
+                        if (t.GetComponent<ChallengeLevelPoint>() != null) { underPodium = true; break; }
+                        t = t.parent;
+                    }
+                    if (underPodium) continue;
+                }
+
+                // Settled title screen: revert leftover DR.
+                if (srScene == "TitleMenu" && !playerActive)
                 {
                     bool wasDR = (crs.image != null && crs.image.material != null
                                 && crs.image.material.name.StartsWith(MaterialName + "_Portrait"))
@@ -141,13 +154,12 @@ namespace RubiniteDarkRuby
                     if (wasDR)
                     {
                         RestoreVanillaPreview(crs);
-                        RubiniteDarkRubyPlugin.Log?.LogInfo(
-                            "DR preview reverted in title screen");
+                        if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+                            RubiniteDarkRubyPlugin.Log?.LogInfo("DR preview reverted in title screen");
                     }
                     continue;
                 }
 
-                // Image-based ChangeRubySkin (TitleMenu preview, Status portrait, skin-menu)
                 if (crs.image != null)
                 {
                     ApplyToPortraitImage(crs.image);
@@ -155,13 +167,21 @@ namespace RubiniteDarkRuby
                 }
 
                 if (crs.spriteRenderer == null) continue;
-
-                // SpriteRenderer-based portraits
                 if (crs.isPortrait)
                 {
                     if (crs.spriteRenderer.material != null
                         && crs.spriteRenderer.material.name.StartsWith(MaterialName + "_Portrait")) continue;
                     ApplyToRenderer(crs.spriteRenderer);
+                    continue;
+                }
+
+                if (crs.spriteRenderer.gameObject.name == "Girl")
+                {
+                    if (!ShouldApplyToRenderer(crs.spriteRenderer)) continue;
+                    if (crs.spriteRenderer.material != null
+                        && crs.spriteRenderer.material.name.StartsWith(MaterialName)) continue;
+                    ApplyToRenderer(crs.spriteRenderer);
+                    continue;
                 }
             }
         }
@@ -547,6 +567,45 @@ namespace RubiniteDarkRuby
             _drCharacterMaterial = null;
             _drPortraitMaterial = null;
             _lastPortraitAttemptFrame = -1;
+        }
+
+        private static ChangeRubySkin[] GetCachedChangeRubySkins()
+        {
+            if (Time.frameCount - _lastCrsScanFrame < CrsScanInterval && _cachedCrsList != null)
+                return _cachedCrsList;
+
+            _lastCrsScanFrame = Time.frameCount;
+            _cachedCrsList = UnityEngine.Object.FindObjectsOfType<ChangeRubySkin>(true);
+            return _cachedCrsList;
+        }
+
+        public static void InvalidateCrsCache()
+        {
+            _lastCrsScanFrame = -1;
+            _cachedCrsList = null;
+            InvalidatePlayerGirlsCache();
+        }
+
+        public static SpriteRenderer[] GetPlayerGirls()
+        {
+            var player = GamePlayCore.Instance?.player;
+            if (player == null) return null;
+
+            if (_cachedPlayerGirls != null && Time.frameCount - _playerGirlsFrame < PlayerGirlsCacheFrames)
+                return _cachedPlayerGirls;
+
+            _playerGirlsFrame = Time.frameCount;
+            var all = player.GetComponentsInChildren<SpriteRenderer>(true);
+            var list = new System.Collections.Generic.List<SpriteRenderer>(all.Length);
+            foreach (var sr in all) if (sr.name == "Girl") list.Add(sr);
+            _cachedPlayerGirls = list.ToArray();
+            return _cachedPlayerGirls;
+        }
+
+        public static void InvalidatePlayerGirlsCache()
+        {
+            _playerGirlsFrame = -1;
+            _cachedPlayerGirls = null;
         }
     }
 }

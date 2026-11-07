@@ -55,6 +55,7 @@ namespace RubiniteDarkRuby
                     + "  DR=" + DarkRubySkin.IsActive);
                 _lastScene = scene; 
                 _cachedPodium = null; 
+                DarkRubySkin.InvalidateCrsCache();
             }
 
             if (scene == "ChallengeArea")
@@ -85,17 +86,16 @@ namespace RubiniteDarkRuby
 
             DarkRubySkin.ApplyToPortraits();
 
-            var player = GamePlayCore.Instance?.player;
-            if (player == null) return;
-
-            foreach (var sr in UnityEngine.Resources.FindObjectsOfTypeAll<SpriteRenderer>())
+            var girls = DarkRubySkin.GetPlayerGirls();
+            if (girls != null)
             {
-                if (sr == null || sr.name != "Girl") continue;
-                if (!sr.gameObject.scene.IsValid()) continue;
-                if (!sr.gameObject.activeInHierarchy) continue;
-                if (sr.material == null) continue;
-                if (sr.material.name.StartsWith(DarkRubySkin.MaterialName)) continue;
-                DarkRubySkin.ForceApplyToRenderer(sr);
+                for (int i = 0; i < girls.Length; i++)
+                {
+                    var sr = girls[i];
+                    if (sr == null || sr.material == null) continue;
+                    if (sr.material.name.StartsWith(DarkRubySkin.MaterialName)) continue;
+                    DarkRubySkin.ApplyToRenderer(sr);
+                }
             }
         }
 
