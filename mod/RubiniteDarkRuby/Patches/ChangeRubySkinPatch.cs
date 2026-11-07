@@ -1,3 +1,4 @@
+using System;
 using HarmonyLib;
 using UnityEngine;
 
@@ -11,6 +12,7 @@ namespace RubiniteDarkRuby.Patches
 
         private static bool Prefix(ChangeRubySkin __instance)
         {
+            if (!DarkRubySkin.IsSkinSystemEnabled) return true;
             if (!DarkRubySkin.IsActive) return true;
             if (__instance == null) return true;
 
@@ -37,6 +39,7 @@ namespace RubiniteDarkRuby.Patches
 
         private static void Postfix(ChangeRubySkin __instance)
         {
+            if (!DarkRubySkin.IsSkinSystemEnabled) return;
             if (!DarkRubySkin.IsActive) return;
             if (__instance == null) return;
             if (!__instance.isPortrait) return;

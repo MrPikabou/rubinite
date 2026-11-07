@@ -47,7 +47,10 @@ namespace RubiniteDarkRuby
                 "Comma-separated thresholds added to BaseTime for S, A, B (C = anything over).");
 
             UseCustomSkin = config.Bind("Skin", "UseCustomSkin", true,
-                "Show the Dark Ruby skin entry in the inventory color menu.");
+                "Master switch for the entire skin system. When false, no custom materials "
+                + "are applied, no DR frame appears in the skin menu, and the skin-related "
+                + "per-frame hooks are disabled. The boss fight, AP integration, and "
+                + "leaderboard continue to work normally.");
 
             BlockVanillaLeaderboard = config.Bind("Leaderboard", "BlockVanillaLeaderboard", true,
                 "Block the vanilla leaderboard for the Dark Ruby fight (no entry exists).");

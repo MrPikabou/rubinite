@@ -1,4 +1,5 @@
 using HarmonyLib;
+using PugTool.Unity.Singleton;
 using UnityEngine;
 
 namespace RubiniteDarkRuby.Patches
@@ -8,8 +9,26 @@ namespace RubiniteDarkRuby.Patches
     {
         private static bool Prefix(ItemDataOverview __instance, ref Material __result)
         {
-            if (__instance?.currentSkinIDFlag?.GetValue() != DarkRubySkinEntry.SkinId)
+            if (!DarkRubySkin.IsSkinSystemEnabled) return true;
+            var flag = __instance?.currentSkinIDFlag?.GetValue();
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
+
+            if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+            {
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "[SkinFlag] GetCurrentSkinMaterial: flag='" + (flag ?? "<null>")
+                    + "' SkinSelected=" + (state?.SkinSelected ?? false)
+                    + " LastVanilla='" + (state?.LastVanillaSkinId ?? "<null>") + "'");
+            }
+
+            if (flag != DarkRubySkinEntry.SkinId) return true;
+
+            if (state?.SkinSelected != true)
+            {
+                DarkRubySkin.EnsureFlagConsistency();
                 return true;
+            }
+
             var mat = DarkRubySkin.GetOrCreateCharacterMaterial();
             if (mat == null) return true;
             __result = mat;
@@ -22,17 +41,28 @@ namespace RubiniteDarkRuby.Patches
     {
         private static bool Prefix(ItemDataOverview __instance, ref Material __result)
         {
-            if (__instance?.currentSkinIDFlag?.GetValue() != DarkRubySkinEntry.SkinId)
-                return true;
+            if (!DarkRubySkin.IsSkinSystemEnabled) return true;
+            var flag = __instance?.currentSkinIDFlag?.GetValue();
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
 
-            var mat = DarkRubySkin.BuildPortraitMaterial(__instance);
-            if (mat == null)
+            if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
             {
-                var defaultItem = __instance.FindUniqueId(__instance.defaultSkinItem?.Id);
-                __result = defaultItem?.skinMaterial_Portrait;
-                return false;
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "[SkinFlag] GetCurrentSkinMaterial_Portrait: flag='" + (flag ?? "<null>")
+                    + "' SkinSelected=" + (state?.SkinSelected ?? false)
+                    + " LastVanilla='" + (state?.LastVanillaSkinId ?? "<null>") + "'");
             }
 
+            if (flag != DarkRubySkinEntry.SkinId) return true;
+
+            if (state?.SkinSelected != true)
+            {
+                DarkRubySkin.EnsureFlagConsistency();
+                return true;
+            }
+
+            var mat = DarkRubySkin.BuildPortraitMaterial(__instance);
+            if (mat == null) return true;
             __result = mat;
             return false;
         }

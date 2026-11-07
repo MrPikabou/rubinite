@@ -1,4 +1,7 @@
 using HarmonyLib;
+using UnityEngine;
+using PugTool.Unity.Singleton;
+using PugTool.Unity.StringList;
 
 namespace RubiniteDarkRuby.Patches
 {
@@ -24,6 +27,28 @@ namespace RubiniteDarkRuby.Patches
             RubiniteDarkRubyPlugin.Log?.LogInfo(
                 "CA entry: moved playerSpawnPoint to DR podium (" + targetPos.x.ToString("F2")
                 + "," + targetPos.y.ToString("F2") + ")");
+            
+            var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            if (overview == null) return;
+            
+            var flag = overview.currentSkinIDFlag.GetValue();
+            if (!string.IsNullOrEmpty(flag) && flag != DarkRubySkinEntry.SkinId)
+            {
+                var item = overview.FindUniqueId(flag);
+                if (item?.skinMaterial != null)
+                {
+                    var player = GamePlayCore.Instance?.player;
+                    if (player != null)
+                    {
+                        foreach (var sr in player.GetComponentsInChildren<SpriteRenderer>(true))
+                        {
+                            if (sr.name != "Girl") continue;
+                            if (sr.material != null && sr.material.name == item.skinMaterial.name) continue;
+                            sr.material = item.skinMaterial;
+                        }
+                    }
+                }
+            }
         }
 
         private static void Postfix(LevelManager __instance)

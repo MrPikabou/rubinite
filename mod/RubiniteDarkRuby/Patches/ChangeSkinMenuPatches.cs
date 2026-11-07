@@ -10,6 +10,7 @@ namespace RubiniteDarkRuby.Patches
     {
         private static void Postfix(ChangeSkinMenu __instance)
         {
+            if (!DarkRubySkin.IsSkinSystemEnabled) return;
             var settings = RubiniteDarkRubyPlugin.Instance?.Settings;
             if (settings?.EnableMod?.Value != true) return;
             if (!DarkRubySkinEntry.ShouldShow) return;
@@ -59,12 +60,21 @@ namespace RubiniteDarkRuby.Patches
     {
         private static void Postfix()
         {
+            if (!DarkRubySkin.IsSkinSystemEnabled) return;
             DarkRubySkin.IsVanillaFrameFocused = false;
 
             var state = RubiniteDarkRubyPlugin.Instance?.State;
+            var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
+
             if (state?.SkinSelected == true)
+            {
+                if (overview?.currentSkinIDFlag != null)
+                {
+                    overview.currentSkinIDFlag.SetValue(DarkRubySkinEntry.SkinId);
+                }
                 DarkRubySkin.Apply();
-            
+            }
+
             DarkRubySkin.InvalidateCrsCache();
         }
     }
@@ -74,36 +84,19 @@ namespace RubiniteDarkRuby.Patches
     {
         private static bool Prefix(SkinFrame __instance, UnityEngine.EventSystems.BaseEventData eventData)
         {
+            if (!DarkRubySkin.IsSkinSystemEnabled) return true;
             if (__instance == null) return true;
 
             bool isDR = __instance.gameObject.name == DarkRubySkinEntry.FrameName;
 
             DarkRubySkin.IsVanillaFrameFocused = !isDR;
 
-            if (!isDR) return true; 
+            if (!isDR) return true;
 
             var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
-            itemOverview?.currentSkinIDFlag?.SetValue("darkruby");
+            itemOverview?.currentSkinIDFlag?.SetValue(DarkRubySkinEntry.SkinId);
 
-            var state = RubiniteDarkRubyPlugin.Instance?.State;
-            if (state != null)
-            {
-                if (!state.SkinSelected)
-                {
-                    var current = GameSetting.Instance?.rubySkinID?.GetValue();
-                    if (!string.IsNullOrEmpty(current) && current != "darkruby")
-                    {
-                        state.LastVanillaSkinId = current;
-                        RubiniteDarkRubyPlugin.Log?.LogInfo(
-                            "DR skin: captured vanilla color as '" + current + "'");
-                    }
-                }
-
-                state.SkinSelected = true;
-                state.Save();
-            }
-
-            DarkRubySkin.Apply();
+            DarkRubySkin.ApplyToPortraitPreview();
 
             if (__instance.displayWhenSelected != null)
                 __instance.displayWhenSelected.SetActive(true);
@@ -127,8 +120,6 @@ namespace RubiniteDarkRuby.Patches
                 }
             }
 
-            RubiniteDarkRubyPlugin.Log?.LogInfo(
-                "DR skin: selected via menu (OnSelect intercepted)");
             return false;
         }
     }
@@ -138,21 +129,46 @@ namespace RubiniteDarkRuby.Patches
     {
         private static bool Prefix(SkinFrame __instance)
         {
+            if (!DarkRubySkin.IsSkinSystemEnabled) return true;
             if (__instance == null) return true;
+
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
+            var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            var currentFlag = overview?.currentSkinIDFlag?.GetValue();
+
             if (__instance.gameObject.name == DarkRubySkinEntry.FrameName)
             {
+                if (state != null)
+                {
+                    state.SkinSelected = true;
+                    state.Save();
+                }
+                if (overview?.currentSkinIDFlag != null)
+                    overview.currentSkinIDFlag.SetValue(DarkRubySkinEntry.SkinId);
+
+                DarkRubySkin.Apply();
                 MenuCore.Instance?.ExitMenu();
+                RubiniteDarkRubyPlugin.Log?.LogInfo("DR skin: committed via DR click");
                 return false;
             }
 
-            var state = RubiniteDarkRubyPlugin.Instance?.State;
-            if (state != null && state.SkinSelected)
+            if (!string.IsNullOrEmpty(currentFlag) && currentFlag != DarkRubySkinEntry.SkinId)
             {
-                state.SkinSelected = false;
+                if (state != null)
+                {
+                    state.LastVanillaSkinId = currentFlag;
+
+                    if (GameSetting.Instance?.rubySkinID != null)
+                        GameSetting.Instance.rubySkinID.SetValue(currentFlag, "RubiniteDarkRuby");
+
+                    state.SkinSelected = false;
+                    state.Save();
+                    try { DataSaver.SaveFlag(DataSaver.path_saveFolder); } catch { }
+                }
+                DarkRubySkin.IsVanillaFrameFocused = false;
                 DarkRubySkin.ClearPortraitTints();
-                state.Save();
                 RubiniteDarkRubyPlugin.Log?.LogInfo(
-                    "DR skin: disabled via vanilla click");
+                    "DR skin: committed vanilla '" + currentFlag + "'");
             }
 
             return true;

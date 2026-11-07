@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using PugTool.Unity.Singleton;
 using PugTool.Unity.StringList;
@@ -43,6 +44,7 @@ namespace RubiniteDarkRuby
             }
 
             if (!_plugin.Settings.EnableMod.Value) return;
+            DarkRubySkin.EnsureFlagConsistency();
 
             if (_plugin.Settings.LogSkinDiagnostics.Value)
                 SkinDiagnostics.Poll(Time.frameCount);
@@ -55,6 +57,7 @@ namespace RubiniteDarkRuby
                     + "  DR=" + DarkRubySkin.IsActive);
                 _lastScene = scene; 
                 _cachedPodium = null; 
+                DarkRubySkin.IsVanillaFrameFocused = false;
                 DarkRubySkin.InvalidateCrsCache();
             }
 
@@ -62,6 +65,11 @@ namespace RubiniteDarkRuby
             {
                 if (Input.GetKeyDown(KeyCode.F10)) ChallengeAreaDumper.DumpChallengeAreaSprites();
                 if (Input.GetKeyDown(KeyCode.F11)) RespawnPodium();
+            }
+
+            if (scene == "TitleMenu" || _lastScene == "TitleMenu")
+            {
+                DarkRubySkin.RestoreIntendedSkin();
             }
 
             if (scene != "ChallengeArea") return;
@@ -72,6 +80,7 @@ namespace RubiniteDarkRuby
         public void PreRenderSkinApply()
         {
             if (!_plugin.Settings.EnableMod.Value) return;
+            if (!DarkRubySkin.IsSkinSystemEnabled) return;
             if (!DarkRubySkin.IsActive) return;
             if (Time.frameCount == _lastPreRenderFrame) return;
             _lastPreRenderFrame = Time.frameCount;
@@ -351,9 +360,10 @@ namespace RubiniteDarkRuby
             if (lm?.levelTimer == null) return;
             float time = lm.levelTimer.timer;
             int rankIndex = CalculateRankIndex(lm.levelData, time);
+            var talismanIds = CaptureEquippedTalismanIds();
 
             _plugin.State.LastFightTimeSeconds = time;
-            _plugin.State.RecordClear(time, rankIndex);
+            _plugin.State.RecordClear(time, rankIndex, talismanIds);
 
             string rankStr = rankIndex switch
             {
@@ -362,6 +372,21 @@ namespace RubiniteDarkRuby
             RubiniteDarkRubyPlugin.Log?.LogInfo(
                 "Dark Ruby cleared in " + time.ToString("F2") + "s (Rank " + rankStr + "). Best: "
                 + _plugin.State.BestTimeSeconds.ToString("F2") + "s");
+        }
+
+        private static List<int> CaptureEquippedTalismanIds()
+        {
+            var result = new List<int> { 0, 0, 0, 0, 0, 0 };
+            var core = GamePlayCore.Instance;
+            if (core?.equippedTalismanList == null) return result;
+
+            for (int i = 0; i < core.equippedTalismanList.Count && i < 6; i++)
+            {
+                var talisman = core.equippedTalismanList[i];
+                if (talisman?.talismanData == null) continue;
+                result[i] = talisman.talismanData.ID_ForRankData;
+            }
+            return result;
         }
 
         private static int CalculateRankIndex(LevelData levelData, float time)

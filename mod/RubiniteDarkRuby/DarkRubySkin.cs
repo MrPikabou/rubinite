@@ -42,6 +42,8 @@ namespace RubiniteDarkRuby
 
         public static bool IsActive =>
             RubiniteDarkRubyPlugin.Instance?.State?.SkinSelected ?? false;
+        public static bool IsSkinSystemEnabled =>
+            RubiniteDarkRubyPlugin.Instance?.Settings?.UseCustomSkin?.Value == true;
         public static bool IsVanillaFrameFocused { get; set; } = false;
         
         /// <summary>
@@ -91,6 +93,7 @@ namespace RubiniteDarkRuby
 
         public static void Apply()
         {
+            if (!IsSkinSystemEnabled) return;
             var player = GamePlayCore.Instance?.player;
             if (player != null)
             {
@@ -115,6 +118,7 @@ namespace RubiniteDarkRuby
         /// </summary>
         public static void ApplyToPortraits()
         {
+            if (!IsSkinSystemEnabled) return;
             if (!IsActive) return;
             if (IsVanillaFrameFocused) return;
 
@@ -144,18 +148,14 @@ namespace RubiniteDarkRuby
                     if (underPodium) continue;
                 }
 
-                // Settled title screen: revert leftover DR.
                 if (srScene == "TitleMenu" && !playerActive)
                 {
-                    bool wasDR = (crs.image != null && crs.image.material != null
-                                && crs.image.material.name.StartsWith(MaterialName + "_Portrait"))
-                            || (crs.spriteRenderer != null && crs.spriteRenderer.material != null
-                                && crs.spriteRenderer.material.name.StartsWith(MaterialName));
-                    if (wasDR)
+                    if (IsActive)
                     {
-                        RestoreVanillaPreview(crs);
-                        if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
-                            RubiniteDarkRubyPlugin.Log?.LogInfo("DR preview reverted in title screen");
+                        if (crs.image != null)
+                            ApplyToPortraitImage(crs.image, forcePreview: false);
+                        else if (crs.spriteRenderer != null)
+                            ApplyToRenderer(crs.spriteRenderer);
                     }
                     continue;
                 }
@@ -186,45 +186,125 @@ namespace RubiniteDarkRuby
             }
         }
 
+        public static void ApplyToPortraitPreview()
+        {
+            if (!IsSkinSystemEnabled) return;
+            var crsList = GetCachedChangeRubySkins();
+            for (int i = 0; i < crsList.Length; i++)
+            {
+                var crs = crsList[i];
+                if (crs == null || !crs.isPortrait) continue;
+
+                // Skip podium previews
+                var t = crs.transform;
+                bool underPodium = false;
+                while (t != null)
+                {
+                    if (t.GetComponent<ChallengeLevelPoint>() != null) { underPodium = true; break; }
+                    t = t.parent;
+                }
+                if (underPodium) continue;
+
+                if (crs.image != null)
+                    ApplyToPortraitImage(crs.image, forcePreview: true);
+                else if (crs.spriteRenderer != null)
+                    ApplyToRenderer(crs.spriteRenderer);
+            }
+        }
+
         public static void RestoreVanillaPreview(ChangeRubySkin crs)
         {
             if (crs == null) return;
             var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
             var state = RubiniteDarkRubyPlugin.Instance?.State;
+            if (overview == null) return;
 
             ItemData item = null;
-            if (overview != null && !string.IsNullOrEmpty(state?.LastVanillaSkinId))
+            string source = null;
+
+            var gameSkin = GameSetting.Instance?.rubySkinID?.GetValue();
+            if (!string.IsNullOrEmpty(gameSkin) && gameSkin != DarkRubySkinEntry.SkinId)
+            {
+                item = overview.FindUniqueId(gameSkin);
+                if (item != null) source = "GameSetting";
+            }
+
+            if (!string.IsNullOrEmpty(state?.LastVanillaSkinId)
+                && state.LastVanillaSkinId != DarkRubySkinEntry.SkinId)
+            {
                 item = overview.FindUniqueId(state.LastVanillaSkinId);
-            if (item == null && overview != null)
+                if (item != null) source = "LastVanilla";
+                else
+                {
+                    RubiniteDarkRubyPlugin.Log?.LogWarning(
+                        "[RestorePreview] LastVanillaSkinId='" 
+                        + state.LastVanillaSkinId + "' did not resolve via FindUniqueId");
+                }
+            }
+
+            if (item == null && overview.currentSkinIDFlag != null)
+            {
+                var flag = overview.currentSkinIDFlag.GetValue();
+                if (!string.IsNullOrEmpty(flag) && flag != DarkRubySkinEntry.SkinId)
+                {
+                    item = overview.FindUniqueId(flag);
+                    if (item != null) source = "currentFlag";
+                }
+            }
+
+            if (item == null)
+            {
                 item = overview.FindUniqueId(overview.defaultSkinItem?.Id);
+                source = "default";
+            }
+
+            if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+            {
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "[RestorePreview] source=" + (source ?? "none")
+                    + " item='" + (item?.DataId ?? "<null>") + "'");
+            }
+
+            if (item == null) return;
 
             if (crs.image != null)
             {
-                var target = item?.skinMaterial_Portrait;
+                var target = item.skinMaterial_Portrait;
                 if (target == null || target.name.StartsWith(MaterialName))
                     target = crs.image.defaultMaterial;
-                if (target != null)
-                    crs.image.material = target;
+                if (target != null) crs.image.material = target;
             }
-
             if (crs.spriteRenderer != null)
             {
-                var target = item?.skinMaterial;
+                var target = item.skinMaterial;
                 if (target == null || target.name.StartsWith(MaterialName))
                 {
                     var shared = crs.spriteRenderer.sharedMaterial;
                     if (shared != null && !shared.name.StartsWith(MaterialName))
                         target = shared;
                 }
-                if (target != null)
-                    crs.spriteRenderer.material = target;
+                if (target != null) crs.spriteRenderer.material = target;
+            }
+
+            if (overview.currentSkinIDFlag != null && item != null 
+                && !string.IsNullOrEmpty(item.DataId))
+            {
+                overview.currentSkinIDFlag.SetValue(item.DataId);
+
+                if (GameSetting.Instance?.rubySkinID != null)
+                {
+                    GameSetting.Instance.rubySkinID.SetValue(item.DataId, "RubiniteDarkRuby");
+                }
+                try { DataSaver.SaveFlag(DataSaver.path_saveFolder); } catch { }
             }
         }
 
-        public static void ApplyToPortraitImage(UnityEngine.UI.Image img)
+        public static void ApplyToPortraitImage(UnityEngine.UI.Image img, bool forcePreview = false)
         {
             if (img == null) return;
-            if (!IsActive) return;
+            if (!forcePreview && !IsActive) return;
+            if (!IsSkinSystemEnabled) return;
+            if (IsVanillaFrameFocused) return;
 
             if (img.gameObject.scene.name == "TitleMenu")
             {
@@ -274,7 +354,20 @@ namespace RubiniteDarkRuby
         public static void ApplyToRenderer(SpriteRenderer sr)
         {
             if (sr == null || sr.material == null) return;
-            if (!ShouldApplyToRenderer(sr)) return;
+            if (!ShouldApplyToRenderer(sr))
+            {
+                if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+                {
+                    RubiniteDarkRubyPlugin.Log?.LogInfo(
+                        "[SkinDebug] Skip: scene=" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name
+                        + " srScene=" + sr.gameObject.scene.name
+                        + " active=" + sr.gameObject.activeInHierarchy
+                        + " vanillaFocus=" + IsVanillaFrameFocused
+                        + " IsActive=" + IsActive
+                        + " isSkinEnabled=" + IsSkinSystemEnabled);
+                }
+                return;
+            }
             if (sr.material.name.StartsWith(MaterialName)) { EnsureEnforcer(sr); return; }
             var mat = GetOrCreateCharacterMaterial();
             if (mat == null) return;
@@ -539,6 +632,108 @@ namespace RubiniteDarkRuby
         {
             _playerGirlsFrame = -1;
             _cachedPlayerGirls = null;
+            _cachedGirlSr = null;
+        }
+
+        public static void EnsureFlagConsistency()
+        {
+            if (!IsSkinSystemEnabled) return;
+
+            try
+            {
+                if (MenuCore.Instance?.currentMenu is ChangeSkinMenu) return;
+            }
+            catch { }
+            
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
+            var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            if (state == null || overview?.currentSkinIDFlag == null) return;
+
+            var currentId = overview.currentSkinIDFlag.GetValue();
+            bool flagIsDR = currentId == DarkRubySkinEntry.SkinId;
+
+            if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+            {
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "[FlagCheck] flag='" + (currentId ?? "<null>")
+                    + "' SkinSelected=" + state.SkinSelected
+                    + " LastVanilla='" + (state.LastVanillaSkinId ?? "<null>")
+                    + "' IsVanillaFrameFocused=" + IsVanillaFrameFocused);
+            }
+
+            if (!state.SkinSelected && string.IsNullOrEmpty(state.LastVanillaSkinId)
+                && !string.IsNullOrEmpty(currentId) && !flagIsDR)
+            {
+                state.LastVanillaSkinId = currentId;
+                state.Save();
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "DR: cached vanilla skin as '" + currentId + "'");
+            }
+
+            if (state.SkinSelected && !flagIsDR && !IsVanillaFrameFocused
+                && SceneManager.GetActiveScene().name != "TitleMenu")
+            {
+                overview.currentSkinIDFlag.SetValue(DarkRubySkinEntry.SkinId);
+            }
+
+            if (!state.SkinSelected && flagIsDR)
+            {
+                var target = state.LastVanillaSkinId;
+
+                if (string.IsNullOrEmpty(target) || target == DarkRubySkinEntry.SkinId
+                    || overview.FindUniqueId(target) == null)
+                {
+                    var gameSkin = GameSetting.Instance?.rubySkinID?.GetValue();
+                    if (!string.IsNullOrEmpty(gameSkin) && gameSkin != DarkRubySkinEntry.SkinId
+                        && overview.FindUniqueId(gameSkin) != null)
+                    {
+                        target = gameSkin;
+                    }
+                }
+                if (string.IsNullOrEmpty(target) || target == DarkRubySkinEntry.SkinId
+                    || overview.FindUniqueId(target) == null)
+                {
+                    target = overview.defaultSkinItem?.Id;
+                }
+
+                if (!string.IsNullOrEmpty(target))
+                {
+                    overview.currentSkinIDFlag.SetValue(target);
+                    state.LastVanillaSkinId = target;
+                    state.Save();
+
+                    if (GameSetting.Instance?.rubySkinID != null)
+                    {
+                        GameSetting.Instance.rubySkinID.SetValue(target, "RubiniteDarkRuby");
+                    }
+                    try { DataSaver.SaveFlag(DataSaver.path_saveFolder); } catch { }
+                    
+                    RubiniteDarkRubyPlugin.Log?.LogInfo(
+                        "DR: stale flag reset to '" + target + "'");
+                }
+            }
+        }
+
+        public static void RestoreIntendedSkin()
+        {
+            var overview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            var state = RubiniteDarkRubyPlugin.Instance?.State;
+            if (overview?.currentSkinIDFlag == null || state == null) return;
+
+            if (state.SkinSelected)
+            {
+                overview.currentSkinIDFlag.SetValue(DarkRubySkinEntry.SkinId);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(state.LastVanillaSkinId)
+                && overview.FindUniqueId(state.LastVanillaSkinId) != null)
+            {
+                overview.currentSkinIDFlag.SetValue(state.LastVanillaSkinId);
+                return;
+            }
+
+            overview.currentSkinIDFlag.SetValue(overview.defaultSkinItem?.Id ?? "");
         }
     }
 }

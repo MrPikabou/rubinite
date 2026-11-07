@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using BepInEx;
 using Newtonsoft.Json;
 using IOPath = System.IO.Path;
@@ -15,6 +16,10 @@ namespace RubiniteDarkRuby
         public float BestTimeSeconds = -1f;
         public float SecondBestTimeSeconds = -1f;
         public float ThirdBestTimeSeconds = -1f;
+
+        public List<int> BestTalismanIds = new List<int> { 0, 0, 0, 0, 0, 0 };
+        public List<int> SecondBestTalismanIds = new List<int> { 0, 0, 0, 0, 0, 0 };
+        public List<int> ThirdBestTalismanIds = new List<int> { 0, 0, 0, 0, 0, 0 };
 
         // Last fight result (for the win screen, regardless of rank)
         public float LastFightTimeSeconds = -1f;
@@ -56,37 +61,56 @@ namespace RubiniteDarkRuby
             try
             {
                 Directory.CreateDirectory(StateDirectory);
-                File.WriteAllText(FilePath, JsonConvert.SerializeObject(this, Formatting.Indented));
+                var json = JsonConvert.SerializeObject(this, Formatting.Indented);
+                File.WriteAllText(FilePath, json);
+                if (RubiniteDarkRubyPlugin.Instance?.Settings?.LogSkinDiagnostics?.Value == true)
+                {
+                    RubiniteDarkRubyPlugin.Log?.LogInfo(
+                        "[StateSave] SkinSelected=" + SkinSelected);
+                }
             }
             catch (Exception ex)
             {
-                RubiniteDarkRubyPlugin.Log?.LogWarning("Could not save DarkRuby state: " + ex.Message);
+                RubiniteDarkRubyPlugin.Log?.LogWarning("Could not save state: " + ex.Message);
             }
         }
 
-        public void RecordClear(float timeSeconds, int rankIndex)
+        public void RecordClear(float timeSeconds, int rankIndex, List<int> talismanIds)
         {
             TotalClears++;
             CompletedOnce = true;
             LastFightTimeSeconds = timeSeconds;
             LastFightRankIndex = rankIndex;
             LastFightRankAchieved = rankIndex >= 0;
-            Save();
 
-            if (BestTimeSeconds < 0 || timeSeconds < BestTimeSeconds)
+            bool isNewBest = BestTimeSeconds < 0 || timeSeconds < BestTimeSeconds;
+            bool isNewSecond = !isNewBest
+                && (SecondBestTimeSeconds < 0 || timeSeconds < SecondBestTimeSeconds);
+            bool isNewThird = !isNewBest && !isNewSecond
+                && (ThirdBestTimeSeconds < 0 || timeSeconds < ThirdBestTimeSeconds);
+
+            var ids = talismanIds ?? new List<int> { 0, 0, 0, 0, 0, 0 };
+
+            if (isNewBest)
             {
                 ThirdBestTimeSeconds = SecondBestTimeSeconds;
+                ThirdBestTalismanIds = SecondBestTalismanIds;
                 SecondBestTimeSeconds = BestTimeSeconds;
+                SecondBestTalismanIds = BestTalismanIds;
                 BestTimeSeconds = timeSeconds;
+                BestTalismanIds = ids;
             }
-            else if (SecondBestTimeSeconds < 0 || timeSeconds < SecondBestTimeSeconds)
+            else if (isNewSecond)
             {
                 ThirdBestTimeSeconds = SecondBestTimeSeconds;
+                ThirdBestTalismanIds = SecondBestTalismanIds;
                 SecondBestTimeSeconds = timeSeconds;
+                SecondBestTalismanIds = ids;
             }
-            else if (ThirdBestTimeSeconds < 0 || timeSeconds < ThirdBestTimeSeconds)
+            else if (isNewThird)
             {
                 ThirdBestTimeSeconds = timeSeconds;
+                ThirdBestTalismanIds = ids;
             }
 
             Save();

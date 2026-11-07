@@ -60,7 +60,6 @@ namespace RubiniteDarkRuby.Patches
 
                 string text = choicesText[i] ?? "";
                 if (text.Contains("Illusion")
-                    || text.Contains("Leaderboard")
                     || text.Contains("幻影")
                     || text.Contains("幻"))
                 {
