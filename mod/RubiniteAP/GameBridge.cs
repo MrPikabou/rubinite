@@ -3401,6 +3401,44 @@ namespace RubiniteAP
 
             DumpTransform(menu.transform, 0);
 
+            AddLog("=== All active ChangeRubySkin components ===");
+            foreach (var crs in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
+            {
+                if (crs?.gameObject == null) continue;
+                if (!crs.gameObject.scene.IsValid()) continue;
+                if (!crs.gameObject.activeInHierarchy) continue;
+
+                var sr = crs.spriteRenderer;
+                AddLog($"  GameObject: {crs.gameObject.name} (scene: {crs.gameObject.scene.name})");
+                AddLog($"    isPortrait: {crs.isPortrait}");
+                if (sr != null)
+                {
+                    AddLog($"    SpriteRenderer: {sr.gameObject.name} (scene: {sr.gameObject.scene.name})");
+                    AddLog($"    Material: {(sr.material != null ? sr.material.name : "null")}");
+                    AddLog($"    Sprite: {(sr.sprite != null ? sr.sprite.name : "null")}");
+                }
+            }
+
+            AddLog("=== All active 'Girl' / 'Portrait' / 'Ruby' SpriteRenderers ===");
+            foreach (var sr in Resources.FindObjectsOfTypeAll<SpriteRenderer>())
+            {
+                if (sr?.gameObject == null) continue;
+                if (!sr.gameObject.scene.IsValid()) continue;
+                if (!sr.gameObject.activeInHierarchy) continue;
+                var n = sr.gameObject.name.ToLower();
+                if (n.Contains("girl") || n.Contains("portrait") || n.Contains("ruby"))
+                {
+                    var chain = new List<string>();
+                    var t = sr.transform;
+                    while (t != null) { chain.Add(t.name); t = t.parent; }
+                    chain.Reverse();
+                    AddLog($"  {sr.gameObject.name} (scene: {sr.gameObject.scene.name})");
+                    AddLog($"    Material: {(sr.material != null ? sr.material.name : "null")}");
+                    AddLog($"    Parent chain: {string.Join(" > ", chain)}");
+                }
+            }
+            AddLog("=== end portrait diagnostic ===");
+
             AddLog("========================================");
             AddLog("=== END MENU DUMP ===");
             AddLog("========================================");
