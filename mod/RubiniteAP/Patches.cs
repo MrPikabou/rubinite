@@ -1174,7 +1174,7 @@ namespace RubiniteAP
                     var choice = __instance.choices[i];
                     if (choice == null) continue;
                     string text = choicesText[i] ?? "";
-                    if (text.Contains("Illusion") || text.Contains("Leaderboard") || text.Contains("幻影") || text.Contains("幻"))
+                    if (text.Contains("幻影") || text.Contains("幻"))
                     {
                         if (choice.button != null) choice.button.interactable = false;
                         choice.gameObject.SetActive(false);
