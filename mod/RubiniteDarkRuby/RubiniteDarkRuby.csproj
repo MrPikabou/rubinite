@@ -83,6 +83,10 @@
       <HintPath>$(ManagedDir)/Assembly-CSharp-firstpass.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="RubyTextMeshPro">
+      <HintPath>$(ManagedDir)/RubyTextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources/*.png" />

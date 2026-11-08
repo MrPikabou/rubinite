@@ -16,6 +16,7 @@ namespace RubiniteDarkRuby
         private GameObject _cachedPodium;
         private string _lastScene;
         private int _lastPreRenderFrame = -1;
+        private int _illusionPreviousWinCount = -1;
 
         private bool _darkRubyInProgress;
         private bool _darkRubyCompleted;
@@ -32,6 +33,8 @@ namespace RubiniteDarkRuby
         public string LastPortalLevel => _lastPortalLevel;
 
         public DarkRubyModule(RubiniteDarkRubyPlugin plugin) { _plugin = plugin; }
+        public bool IsIllusionRequested { get; set; }
+        public bool IsIllusionRun { get; set; }
 
         public void Tick()
         {
@@ -52,6 +55,13 @@ namespace RubiniteDarkRuby
             var scene = SceneManager.GetActiveScene().name;
             if (scene != _lastScene) 
             { 
+                if (_lastScene == "DarkRubyLevel" && IsIllusionRun)
+                {
+                    IsIllusionRun = false;
+                    RestoreWinCount();
+                    RubiniteDarkRubyPlugin.Log?.LogInfo("DR: Illusion run ended");
+                }
+
                 RubiniteDarkRubyPlugin.Log?.LogInfo(
                     "[Scene] '" + (_lastScene ?? "<none>") + "' → '" + scene + "'"
                     + "  DR=" + DarkRubySkin.IsActive);
@@ -270,6 +280,20 @@ namespace RubiniteDarkRuby
             lm.levelTimer.Resume();
             _darkRubyTimerPausedForCutscene = false;
             RubiniteDarkRubyPlugin.Log?.LogInfo("Dark Ruby: timer resumed after '" + _lastDarkRubyCutsceneName + "'");
+
+            if (IsIllusionRun)
+            {
+                if (lm.bossUI != null && !lm.bossUI.gameObject.activeSelf)
+                {
+                    lm.bossUI.gameObject.SetActive(true);
+                }
+                if (lm.playerUI != null)
+                {
+                    lm.playerUI.SetHide(false);
+                }
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "DR Illusion: BossUI + PlayerUI shown after '" + _lastDarkRubyCutsceneName + "'");
+            }
         }
 
         // ---- Boss death ----
@@ -458,6 +482,38 @@ namespace RubiniteDarkRuby
                 yield return null;
             }
             RubiniteDarkRubyPlugin.Log?.LogInfo("Teleport: position lock released");
+        }
+
+        public void SnapshotWinCount()
+        {
+            var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+            var ld = overview?.FindUniqueId("DarkRubyLevel");
+            if (ld == null)
+                foreach (var x in overview.GetAllData())
+                    if (x != null && x.DisplayName == "DarkRubyLevel") { ld = x; break; }
+            if (ld?.winCount != null)
+            {
+                _illusionPreviousWinCount = ld.winCount.GetValue();
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "DR Illusion: winCount snapshot = " + _illusionPreviousWinCount);
+            }
+        }
+
+        public void RestoreWinCount()
+        {
+            if (_illusionPreviousWinCount < 0) return;
+            var overview = SingletonScriptableObject<LevelDataOverview>.Instance;
+            var ld = overview?.FindUniqueId("DarkRubyLevel");
+            if (ld == null)
+                foreach (var x in overview.GetAllData())
+                    if (x != null && x.DisplayName == "DarkRubyLevel") { ld = x; break; }
+            if (ld?.winCount != null)
+            {
+                ld.winCount.SetValue(_illusionPreviousWinCount);
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "DR Illusion: winCount restored to " + _illusionPreviousWinCount);
+            }
+            _illusionPreviousWinCount = -1;
         }
     }
 }

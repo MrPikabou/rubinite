@@ -80,4 +80,120 @@ namespace RubiniteDarkRuby.Patches
             }
         }
     }
+
+    [HarmonyPatch(typeof(ApplicationCore), "LoadLevel")]
+    internal static class LoadLevelIllusionPatch
+    {
+        private static void Prefix(ref string levelName, ref bool saveData)
+        {
+            var module = RubiniteDarkRubyPlugin.Instance?.Module;
+            if (module == null || !module.IsIllusionRequested) return;
+
+            if (levelName != "DarkRubyLevel")
+            {
+                module.IsIllusionRequested = false;
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "DR: Illusion request cleared (non-DR level '" + levelName + "')");
+                return;
+            }
+
+            saveData = false;
+            module.IsIllusionRun = true;
+            module.IsIllusionRequested = false;
+            module.SnapshotWinCount();
+            RubiniteDarkRubyPlugin.Log?.LogInfo(
+                "DR: Loading DarkRubyLevel as Illusion (saveData=false)");
+        }
+    }
+
+    [HarmonyPatch(typeof(BasicEnemyCore), "Start")]
+    internal static class DarkRubyCoreIllusionPatch
+    {
+        private static void Prefix(BasicEnemyCore __instance)
+        {
+            if (!(__instance is DarkRubyCore)) return;
+            var module = RubiniteDarkRubyPlugin.Instance?.Module;
+            if (module == null || !module.IsIllusionRun) return;
+
+            var attr = __instance.enemyAttr;
+            if (attr == null) return;
+
+            float playerMaxHP = GamePlayCore.Instance?.player?.Attr?.maxHP ?? 100f;
+            float playerHit = GamePlayCore.Instance?.player?.Attr?.atk5_OfCriticalStrike ?? 40f;
+
+            float bossHP = playerMaxHP;
+
+            attr.maxHP = (int)bossHP;
+            //attr.maxHP = 1; -> Vanilla HP
+            attr.hpBarMaxValue = new[] { bossHP };
+            RubiniteDarkRubyPlugin.Log?.LogInfo(
+                "DR Illusion: boss maxHP=" + bossHP
+                + " (playerMaxHP=" + playerMaxHP + ", playerHit=" + playerHit + ")");
+        }
+
+        private static void Postfix(BasicEnemyCore __instance)
+        {
+            if (!(__instance is DarkRubyCore)) return;
+            var module = RubiniteDarkRubyPlugin.Instance?.Module;
+            if (module == null || !module.IsIllusionRun) return;
+
+            __instance.isSecondRun = false;
+
+            var lm = GamePlayCore.Instance?.levelManager;
+            if (lm?.bossUI?.textMesh != null)
+            {
+                lm.bossUI.textMesh.uneditedText = "Dark Ruby";
+                RubiniteDarkRubyPlugin.Log?.LogInfo(
+                    "DR Illusion: boss name re-asserted to 'Dark Ruby'");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(LevelManager), "SetUp")]
+    internal static class LevelManagerIllusionPatch
+    {
+        private static void Postfix(LevelManager __instance)
+        {
+            if (__instance == null) return;
+            if (__instance.gameObject.scene.name != "DarkRubyLevel") return;
+            var module = RubiniteDarkRubyPlugin.Instance?.Module;
+            if (module == null || !module.IsIllusionRun) return;
+
+            try
+            {
+                if (__instance.bossUI != null)
+                {
+                    __instance.bossUI.gameObject.SetActive(false);
+                    RubiniteDarkRubyPlugin.Log?.LogInfo("DR Illusion: BossUI hidden until cutscene");
+                }
+
+                if (__instance.playerUI != null)
+                {
+                    __instance.playerUI.gameObject.SetActive(true);
+                    __instance.playerUI.SetHide(true);
+                    __instance.playerUI.SetAlpha(0f);
+                    RubiniteDarkRubyPlugin.Log?.LogInfo("DR Illusion: PlayerUI hidden until cutscene");
+                }
+
+                var player = GamePlayCore.Instance?.player;
+                if (player != null)
+                {
+                    if (GamePlayCore.Instance.HPBottleCountMax != null)
+                        GamePlayCore.Instance.HPBottleCountMax.SetValue(3);
+
+                    player.skipDeath = false;
+                    player.HP = player.Attr != null ? player.Attr.maxHP : 100;
+                    player.HPBottleCount = 3;
+                    RubiniteDarkRubyPlugin.Log?.LogInfo(
+                        "DR Illusion: player HP=" + player.HP
+                        + " bottles=3 skipDeath=false");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                RubiniteDarkRubyPlugin.Log?.LogWarning(
+                    "DR Illusion setup failed: " + ex.Message);
+            }
+        }
+    }
 }

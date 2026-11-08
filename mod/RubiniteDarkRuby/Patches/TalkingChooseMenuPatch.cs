@@ -4,17 +4,6 @@ using UnityEngine.SceneManagement;
 
 namespace RubiniteDarkRuby.Patches
 {
-    /// <summary>
-    /// Blocks the "Illusion" and "Leaderboard" options on the Dark Ruby podium dialogue
-    /// menu. Both lead to cut content that softlocks when opened. Detection is by
-    /// proximity to the nearest ChallengeLevelPoint - only the Dark Ruby podium is
-    /// affected, all other podiums show their vanilla menu unchanged.
-    ///
-    /// When the AP mod is also running with boss shuffle, it handles the case
-    /// where a shuffled portal (e.g. GuardianLevel -> DarkRubyLevel) leads to Dark Ruby.
-    /// This patch only covers the actual Dark Ruby podium (levelName = DarkRubyLevel).
-    /// Both are idempotent.
-    /// </summary>
     [HarmonyPatch(typeof(TalkingChooseMenu), "SetChoices")]
     internal static class TalkingChooseMenuPatch
     {
@@ -57,16 +46,6 @@ namespace RubiniteDarkRuby.Patches
             {
                 var choice = __instance.choices[i];
                 if (choice == null) continue;
-
-                string text = choicesText[i] ?? "";
-                if (text.Contains("Illusion")
-                    || text.Contains("幻影")
-                    || text.Contains("幻"))
-                {
-                    if (choice.button != null) choice.button.interactable = false;
-                    choice.gameObject.SetActive(false);
-                    blocked++;
-                }
             }
 
             if (blocked > 0)
@@ -74,6 +53,51 @@ namespace RubiniteDarkRuby.Patches
                 RubiniteDarkRubyPlugin.Log?.LogInfo(
                     "Blocked " + blocked + " cut-content option(s) at "
                     + portalLevel + " (-> " + targetLevel + ")");
+            }
+        }
+    }
+
+    [HarmonyPatch(typeof(TalkingChooseMenu), "Choose")]
+    internal static class TalkingChooseMenuChoosePatch
+    {
+        private static void Prefix(TalkingChooseMenu __instance, int index)
+        {
+            if (__instance?.choices == null) return;
+            if (index < 0 || index >= __instance.choices.Length) return;
+            var choice = __instance.choices[index];
+            if (choice == null) return;
+
+            var text = choice.rubyTextMesh != null
+                ? choice.rubyTextMesh.uneditedText
+                : (choice.textMesh != null ? choice.textMesh.text : "");
+            if (string.IsNullOrEmpty(text)) return;
+
+            if (text.Contains("Illusion") || text.Contains("幻影") || text.Contains("幻"))
+            {
+                var player = GamePlayCore.Instance?.player;
+                if (player == null) return;
+
+                ChallengeLevelPoint nearest = null;
+                float nearestDist = float.MaxValue;
+                foreach (var p in UnityEngine.Resources.FindObjectsOfTypeAll<ChallengeLevelPoint>())
+                {
+                    if (p?.gameObject == null || !p.gameObject.scene.IsValid()) continue;
+                    float d = Vector2.Distance(player.transform.position, p.transform.position);
+                    if (d < nearestDist) { nearestDist = d; nearest = p; }
+                }
+                if (nearest == null || nearestDist > 3.5f) return;
+                var portalLevel = nearest.levelName?.displayName;
+                if (string.IsNullOrEmpty(portalLevel)) return;
+                var mapped = ApBridgeHook.GetMappedLevel(portalLevel);
+                var target = string.IsNullOrEmpty(mapped) ? portalLevel : mapped;
+                if (target != "DarkRubyLevel") return;
+
+                var module = RubiniteDarkRubyPlugin.Instance?.Module;
+                if (module != null)
+                {
+                    module.IsIllusionRequested = true;
+                    RubiniteDarkRubyPlugin.Log?.LogInfo("DR: Illusion button clicked");
+                }
             }
         }
     }

@@ -68,7 +68,7 @@ namespace RubiniteDarkRuby
             switch (PortalPositionPreset.Value)
             {
                 case "NearMaster":     return (11f, -17.33f);
-                case "ExtendedCorner": return (10.75f, -25.45f);
+                case "ExtendedCorner": return (10.25f, -25.45f);
                 default:               return (PortalOffsetX.Value, PortalOffsetY.Value);
             }
         }
