@@ -125,11 +125,13 @@ namespace RubiniteAP
 
         private bool _seedHasDeathLink;
         private int _deathLinkAmnesty;
+        private bool _killedByDeathLink;
         private int _lastKnownPlayerHp = -1;
         private bool _playerDeathFired;
         private System.Reflection.MethodInfo _playerKillMethod;
         public int DeathsSinceLastSend => State.DeathsSinceLastSend;
         public int DeathLinkAmnesty => _deathLinkAmnesty;
+        public event Action<string, string> DeathLinkReceivedMessage;
         
         private static System.Reflection.MethodInfo _getLevelNameMethod;
         private static bool _getLevelNameMethodSearched;
@@ -146,6 +148,8 @@ namespace RubiniteAP
             ApRunActive &&
             _seedHasDeathLink &&
             (RubiniteAPPlugin.Instance?.Settings?.DeathLinkEnabled?.Value ?? false);
+
+        public bool IsDeathLinkActive => DeathLinkActive;
 
         public sealed class ScoutedLocationInfo
         {
@@ -937,6 +941,15 @@ namespace RubiniteAP
             {
                 if (GameSetting.Instance?.dustFlag != null)
                 {
+                    var core = GetGamePlayCore();
+                    if (core?.dust != null && GameSetting.Instance.dustFlag != null
+                        && core.dust != GameSetting.Instance.dustFlag)
+                    {
+                        int coreDust = core.dust.GetValue();
+                        if (coreDust != GameSetting.Instance.dustFlag.GetValue())
+                            GameSetting.Instance.dustFlag.SetValue(coreDust, "RubiniteAP");
+                    }
+
                     int currentDust = GameSetting.Instance.dustFlag.GetValue();
                     if (currentDust != State.LastKnownDust)
                     {
@@ -3104,23 +3117,23 @@ namespace RubiniteAP
 
         private void OnDeathLinkReceived(string source, string cause)
         {
-            if (!ApRunActive || !DeathLinkActive) return;
-            var sceneName = SceneManager.GetActiveScene().name;
-            if (sceneName == "TitleMenu" || sceneName == ChallengeAreaScene) return;
+                if (!ApRunActive || !DeathLinkActive) return;
+                var sceneName = SceneManager.GetActiveScene().name;
+                if (sceneName == "TitleMenu" || sceneName == ChallengeAreaScene) return;
 
-            AddLog("DeathLink from " + source + ": " + cause);
+                AddLog($"{source} sends their regards: {cause}");
+                
+                DeathLinkReceivedMessage?.Invoke(source, cause);
 
-            var core = GetGamePlayCore();
-            if (core?.player == null) return;
+                var core = GetGamePlayCore();
+                if (core?.player == null) return;
 
             if (TryKillLocalPlayer(core.player))
             {
                 AddLog("Local player killed by DeathLink.");
                 _lastKnownPlayerHp = -1;
                 _playerDeathFired = false;
-
-                State.DeathsSinceLastSend = 0;
-                State.Save();
+                _killedByDeathLink = true;
             }
             else
             {
@@ -3182,11 +3195,19 @@ namespace RubiniteAP
 
         private void OnLocalPlayerDied()
         {
+            if (!DeathLinkActive) return;
+            if (_killedByDeathLink)
+            {
+                _killedByDeathLink = false;
+                AddLog("Death forgiven (was an incoming DeathLink).");
+                return;
+            }
+
             State.DeathsSinceLastSend++;
 
-            if (DeathLinkActive && State.DeathsSinceLastSend >= _deathLinkAmnesty)
+            if (State.DeathsSinceLastSend >= _deathLinkAmnesty)
             {
-                Client.SendDeathLink("died in " + SceneManager.GetActiveScene().name);
+                Client.SendDeathLink(BuildFunnyDeathCause());
                 AddLog("DeathLink sent (" + State.DeathsSinceLastSend + " deaths).");
                 State.DeathsSinceLastSend = 0;
             }
@@ -3194,8 +3215,88 @@ namespace RubiniteAP
             {
                 AddLog("Death forgiven (" + State.DeathsSinceLastSend + "/" + _deathLinkAmnesty + ").");
             }
-            
+
+            SyncTransientStateBeforeSave();
             State.Save();
+        }
+
+        // TODO edit DL messages
+        private static readonly string[] GenericDeathCauses = new[]
+        {
+            "tripped on a perfectly flat surface",
+            "tried to hug a boss",
+            "forgot that dodging was an option",
+            "got distracted by a shiny crystal",
+            "died of pure skill issue",
+            "was defeated by their own reflection",
+            "went to pet a dangerous creature",
+            "believed in themselves a bit too much",
+            "tried to speedrun the afterlife",
+            "found out the hitbox is bigger than it looks",
+            "was defeated by gravity",
+            "entered a boss arena without a plan",
+            "learned that you can't parry everything",
+            "got slapped into next Tuesday",
+            "attempted to bargain with a hostile entity",
+            "slipped on the floor",
+            "forgot HP doesn't regenerate on its own",
+            "was humbled by a very angry tree",
+            "forgot how to press the dodge button",
+            "attempted the forbidden technique of standing still",
+        };
+
+        // TODO edit DL messages
+        private static readonly string[] BossSpecificDeathCauses = new[]
+        {
+            "got too close to the {boss}",
+            "was flattened by the {boss}",
+            "underestimated the {boss}",
+            "had a disagreement with the {boss}",
+            "wanted to see what the {boss} would do",
+            "tried to negotiate with the {boss}",
+            "was politely escorted out of existence by the {boss}",
+            "was informed of their mistake by the {boss}",
+            "was generously offered a free flying lesson by the {boss}",
+        };
+
+        private string BuildFunnyDeathCause()
+        {
+            var scene = SceneManager.GetActiveScene().name;
+            var boss = GameData.FindByLevel(scene);
+
+            if (boss != null && UnityEngine.Random.value < 0.6f)
+            {
+                var template = BossSpecificDeathCauses[
+                    UnityEngine.Random.Range(0, BossSpecificDeathCauses.Length)];
+                return template.Replace("{boss}", boss.Name);
+            }
+
+            return GenericDeathCauses[
+                UnityEngine.Random.Range(0, GenericDeathCauses.Length)];
+        }
+
+        /// <summary>
+        /// Stellt sicher, dass alle in-memory-Daten, die der State-Save
+        /// mitschreibt, aktuell sind. Verhindert, dass z.B. Dust mit einem
+        /// veralteten Wert persistiert wird, wenn gerade ein Bossfight läuft.
+        /// </summary>
+        private void SyncTransientStateBeforeSave()
+        {
+            var core = GetGamePlayCore();
+            if (core?.dust != null && GameSetting.Instance?.dustFlag != null)
+            {
+                if (core.dust != GameSetting.Instance.dustFlag)
+                {
+                    int coreDust = core.dust.GetValue();
+                    int flagDust = GameSetting.Instance.dustFlag.GetValue();
+                    if (coreDust != flagDust)
+                    {
+                        GameSetting.Instance.dustFlag.SetValue(coreDust, "RubiniteAP");
+                    }
+                }
+
+                State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
+            }
         }
 
          public string GetPlayerName(int slot)

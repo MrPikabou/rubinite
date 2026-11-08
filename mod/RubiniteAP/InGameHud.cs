@@ -49,7 +49,12 @@ namespace RubiniteAP
         private GameObject _deathLinkCounterPanel;
         private TextMeshProUGUI _deathLinkCounterText;
         private CanvasGroup _deathLinkCounterCanvasGroup;
-
+        private GameObject _incomingDLPanel;
+        private TextMeshProUGUI _incomingDLTextComponent;
+        private CanvasGroup _incomingDLCanvasGroup;
+        private LayoutElement _incomingDLTextLayout;
+        private float _incomingDLShownAt = -1f;
+        private const float IncomingDLDisplayTime = 3f;
         private float _deathLinkTimer = -1f;
         private bool _wasDead = false;
         private const float DeathLinkCounterHoldTime = 3f;
@@ -92,7 +97,9 @@ namespace RubiniteAP
             CreateSigilTracker();
             CreateTooltip();
             CreateDeathLinkCounter();
-
+            CreateIncomingDLPanel();
+            
+            _bridge.DeathLinkReceivedMessage += OnIncomingDeathLink;
             _lastReceivedCount = bridge.GetReceivedHistory().Count;
             _lastSentCount = bridge.GetSentHistory().Count();
 
@@ -427,6 +434,86 @@ namespace RubiniteAP
             _deathLinkCounterPanel.SetActive(false);
         }
 
+        private void CreateIncomingDLPanel()
+        {
+            _incomingDLPanel = new GameObject("AP_IncomingDLPanel");
+            _incomingDLPanel.transform.SetParent(_canvas.transform, false);
+            _incomingDLCanvasGroup = _incomingDLPanel.AddComponent<CanvasGroup>();
+            _incomingDLCanvasGroup.alpha = 0f;
+
+            var bgImg = _incomingDLPanel.AddComponent<Image>();
+            var nativeBg = _bridge.FindSpriteByName("UI_SkillBook_Frame_Info_Paper_main");
+            if (nativeBg != null)
+            {
+                bgImg.sprite = nativeBg;
+                bgImg.type = Image.Type.Sliced;
+                bgImg.color = Color.white;
+            }
+            else
+            {
+                bgImg.sprite = _panelSprite;
+                bgImg.type = Image.Type.Sliced;
+                bgImg.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+            }
+
+            var hLayout = _incomingDLPanel.AddComponent<HorizontalLayoutGroup>();
+            hLayout.padding = new RectOffset(45, 45, 20, 20); 
+            hLayout.spacing = 15f;
+            
+            hLayout.childControlWidth = true;
+            hLayout.childControlHeight = true;
+            hLayout.childForceExpandHeight = false;
+            hLayout.childForceExpandWidth = false;
+            hLayout.childAlignment = TextAnchor.MiddleLeft;
+
+            var fitter = _incomingDLPanel.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+
+            var rt = _incomingDLPanel.GetComponent<RectTransform>();
+            rt.anchorMin = new Vector2(0, 0);
+            rt.anchorMax = new Vector2(0, 0);
+            rt.pivot = new Vector2(0, 0);
+            rt.anchoredPosition = new Vector2(30f, 30f);
+            
+            rt.sizeDelta = new Vector2(0f, 100f); 
+
+            var accentGo = new GameObject("Icon");
+            accentGo.transform.SetParent(_incomingDLPanel.transform, false);
+            var accentImg = accentGo.AddComponent<Image>();
+            
+            accentImg.sprite = _bridge.FindSpriteByName("Ruby_Death_8"); 
+            if (accentImg.sprite == null) accentImg.sprite = _panelSprite;
+            
+            accentImg.preserveAspect = false; 
+            accentImg.color = Color.white;
+
+            var accentLayout = accentGo.AddComponent<LayoutElement>();
+            accentLayout.minWidth = 48f;
+            accentLayout.minHeight = 48f;
+            accentLayout.preferredWidth = 80f;
+            accentLayout.preferredHeight = 80f; 
+            accentLayout.flexibleWidth = 0f;
+            accentLayout.flexibleHeight = 0f;
+
+            var textGo = new GameObject("Text");
+            textGo.transform.SetParent(_incomingDLPanel.transform, false);
+            _incomingDLTextComponent = textGo.AddComponent<TextMeshProUGUI>();
+            if (_gameFont != null) _incomingDLTextComponent.font = _gameFont;
+            
+            _incomingDLTextComponent.fontSize = 24; 
+            _incomingDLTextComponent.alignment = TextAlignmentOptions.MidlineLeft; 
+            _incomingDLTextComponent.color = new Color32(80, 50, 30, 255);
+            
+            _incomingDLTextComponent.enableWordWrapping = false; 
+            _incomingDLTextComponent.overflowMode = TextOverflowModes.Overflow;
+            _incomingDLTextComponent.richText = true;
+
+            _incomingDLTextLayout = textGo.AddComponent<LayoutElement>();
+            _incomingDLTextLayout.preferredHeight = 48f;
+            _incomingDLPanel.SetActive(false);
+        }
+
         private void Update()
         {
             if (_bridge == null) return;
@@ -439,7 +526,13 @@ namespace RubiniteAP
             _pausePanel.SetActive(isPaused);
             _trackerPanel.SetActive(isPaused);
 
-            if (isPaused)
+            // ===== Amnesty-Counter (top-left) =====
+            if (!_bridge.IsDeathLinkActive)
+            {
+                _deathLinkCounterPanel.SetActive(false);
+                _wasDead = false;
+            }
+            else if (isPaused)
             {
                 _deathLinkCounterPanel.SetActive(true);
                 _deathLinkCounterCanvasGroup.alpha = 1f;
@@ -456,7 +549,6 @@ namespace RubiniteAP
                 if (age < DeathLinkCounterHoldTime)
                 {
                     _deathLinkCounterPanel.SetActive(true);
-                    
                     if (age > DeathLinkCounterHoldTime - ToastFadeTime)
                         _deathLinkCounterCanvasGroup.alpha = 1f - (age - (DeathLinkCounterHoldTime - ToastFadeTime)) / ToastFadeTime;
                     else
@@ -473,20 +565,45 @@ namespace RubiniteAP
                 _deathLinkCounterPanel.SetActive(false);
             }
 
-            if (_deathLinkCounterPanel.activeSelf)
+            if (_bridge.IsDeathLinkActive && _deathLinkCounterPanel.activeSelf)
             {
-                if (_bridge.DeathLinkAmnesty <= 0)
+                int remaining = _bridge.DeathLinkAmnesty - _bridge.DeathsSinceLastSend;
+                if (remaining <= 0)
+                    _deathLinkCounterText.text = "<color=#8b3636>Next death triggers DeathLink!</color>";
+                else
+                    _deathLinkCounterText.text = $"DeathLink in {remaining} death(s)";
+            }
+
+            // ===== Incoming-DL-Notification (bottom-left) =====
+            if (!_bridge.IsDeathLinkActive)
+            {
+                _incomingDLShownAt = -1f;
+                if (_incomingDLPanel != null) _incomingDLPanel.SetActive(false);
+            }
+            else if (_incomingDLShownAt > 0)
+            {
+                float dlAge = Time.unscaledTime - _incomingDLShownAt;
+                if (dlAge < IncomingDLDisplayTime)
                 {
-                    _deathLinkCounterText.text = "DeathLink disabled (Amnesty 0)";
+                    _incomingDLPanel.SetActive(true);
+
+                    // Fade in / hold / fade out
+                    if (dlAge < ToastFadeTime)
+                        _incomingDLCanvasGroup.alpha = dlAge / ToastFadeTime;
+                    else if (dlAge < IncomingDLDisplayTime - ToastFadeTime)
+                        _incomingDLCanvasGroup.alpha = 1f;
+                    else
+                        _incomingDLCanvasGroup.alpha = 1f - (dlAge - (IncomingDLDisplayTime - ToastFadeTime)) / ToastFadeTime;
                 }
                 else
                 {
-                    int remaining = _bridge.DeathLinkAmnesty - _bridge.DeathsSinceLastSend;
-                    if (remaining <= 0)
-                        _deathLinkCounterText.text = "<color=#8b3636>Next death triggers DeathLink!</color>";
-                    else
-                        _deathLinkCounterText.text = $"DeathLink in {remaining} death(s)";
+                    _incomingDLPanel.SetActive(false);
+                    _incomingDLShownAt = -1f;
                 }
+            }
+            else
+            {
+                if (_incomingDLPanel != null) _incomingDLPanel.SetActive(false);
             }
 
             if (isPaused)
@@ -979,6 +1096,32 @@ namespace RubiniteAP
             if (menuCore == null || menuCore.currentMenu == null) return false;
             
             return menuCore.currentMenu.GetType().Name == "Option";
+        }
+
+        private void OnIncomingDeathLink(string source, string cause)
+        {
+            if (_incomingDLTextComponent == null || _incomingDLPanel == null) return;
+
+            _incomingDLPanel.SetActive(true);
+            
+            string plainText = $"{source} {cause}";
+            Vector2 preferredValues = _incomingDLTextComponent.GetPreferredValues(plainText, 0, 0);
+            
+            if (_incomingDLTextLayout != null)
+            {
+                _incomingDLTextLayout.preferredWidth = preferredValues.x + 15f;
+            }
+
+            _incomingDLTextComponent.text = $"<color=#8b3636><b>{source}</b></color> {cause}";
+            
+            _incomingDLCanvasGroup.alpha = 0f;
+            _incomingDLShownAt = Time.unscaledTime;
+
+            var rt = _incomingDLPanel.GetComponent<RectTransform>();
+            if (rt != null)
+            {
+                UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rt);
+            }
         }
     }
 }
