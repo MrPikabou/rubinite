@@ -1109,19 +1109,6 @@ namespace RubiniteAP
 
 
 
-            // F5 — Debug DeathLink senden
-            if (Input.GetKeyDown(KeyCode.F5))
-            {
-                if (Client.IsConnected)
-                {
-                    Client.SendDeathLink("Manual debug DeathLink via F5");
-                    AddLog("F5: Sent manual DeathLink.");
-                }
-                else
-                {
-                    AddLog("F5: Cannot send DeathLink, not connected.");
-                }
-            }
 
             // F6 — Dump ALL unique sprites in the scene
             if (Input.GetKeyDown(KeyCode.F6))
