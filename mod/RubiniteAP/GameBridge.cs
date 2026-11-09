@@ -562,49 +562,12 @@ namespace RubiniteAP
 
         private void OnLocationScouted(long locationId, long itemId, int playerId, string serverName, int flags)
         {
-            // Already handled by the shop dictionary lookup, because
-            // _scoutedShopItems[title] is populated for ANY title that matches a
-            // location ID, and skill tree locations use the same title key format.
-            // Just make sure the location ID loop covers skill tree IDs too:
-            string title = null;
-            foreach (var kv in _shopLocationIds)
-                if (kv.Value == locationId) { title = kv.Key; break; }
-            if (title == null)
-                foreach (var kv in _skillTreeLocationIds)
-                    if (kv.Value == locationId) { title = kv.Key; break; }
-            if (title == null) return;
-
-            string display;
-            if (_itemNames.TryGetValue(itemId, out var local) && !string.IsNullOrEmpty(local))
-                display = local;
-            else if (!string.IsNullOrEmpty(serverName))
-                display = serverName;
-            else
-            {
-                var resolved = Client.LookupCrossGameItemName(playerId, itemId);
-                display = !string.IsNullOrEmpty(resolved) ? resolved : "Item #" + itemId;
-            }
-
-            bool isCrossGame = playerId != _mySlot;
-            if (isCrossGame && _playerNames.TryGetValue(playerId, out var otherName))
-            {
-                if (display.StartsWith("Item #"))
-                    display = "Unknown item from " + otherName;
-                else
-                    display = otherName + "'s " + display;
-            }
-
-            if (isCrossGame)
-                _crossGameScoutedTitles.Add(title);
-            else
-                _crossGameScoutedTitles.Remove(title);
-
-            _scoutedShopItems[title] = display;
-            _scoutedShopFlags[title] = flags;
-
+            string localName;
+            _itemNames.TryGetValue(itemId, out localName);
+            
             string trackerName;
-            if (!string.IsNullOrEmpty(local))
-                trackerName = local;
+            if (!string.IsNullOrEmpty(localName))
+                trackerName = localName;
             else if (!string.IsNullOrEmpty(serverName))
                 trackerName = serverName;
             else
@@ -623,7 +586,34 @@ namespace RubiniteAP
                 Flags = flags,
             };
 
-            if (title != null && title.StartsWith("Skill Tree: "))
+            string title = null;
+            foreach (var kv in _shopLocationIds)
+                if (kv.Value == locationId) { title = kv.Key; break; }
+            if (title == null)
+                foreach (var kv in _skillTreeLocationIds)
+                    if (kv.Value == locationId) { title = kv.Key; break; }
+            
+            if (title == null) return;
+
+            string display = trackerName;
+            bool isCrossGame = playerId != _mySlot;
+            if (isCrossGame && _playerNames.TryGetValue(playerId, out var otherName))
+            {
+                if (display.StartsWith("Item #"))
+                    display = "Unknown item from " + otherName;
+                else
+                    display = otherName + "'s " + display;
+            }
+
+            if (isCrossGame)
+                _crossGameScoutedTitles.Add(title);
+            else
+                _crossGameScoutedTitles.Remove(title);
+
+            _scoutedShopItems[title] = display;
+            _scoutedShopFlags[title] = flags;
+
+            if (title.StartsWith("Skill Tree: "))
             {
                 var parts = title.Split(':');
                 if (parts.Length >= 2)
@@ -2174,7 +2164,6 @@ namespace RubiniteAP
             
             AddLog("Shop Purchase Attempt: '" + talismanTitle + "'");
 
-            // Send the location check
             if (_shopLocationIds.TryGetValue(talismanTitle, out long locId))
             {
                 var newIds = new List<long> { locId };
@@ -2195,12 +2184,19 @@ namespace RubiniteAP
                 AddLog("WARNING: No shop location found for '" + talismanTitle + "'");
             }
 
-            // Re-lock the talisman so it disappears from the shop
             ApplyRuntime(true);
+
+            var core = GetGamePlayCore();
+            if (core?.dust != null && GameSetting.Instance?.dustFlag != null 
+                && core.dust != GameSetting.Instance.dustFlag)
+            {
+                GameSetting.Instance.dustFlag.SetValue(core.dust.GetValue(), "RubiniteAP");
+            }
 
             if (GameSetting.Instance?.dustFlag != null)
                 State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
             State.Save();
+            
             if (DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
             {
                 try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
@@ -3652,6 +3648,45 @@ namespace RubiniteAP
             darkRubyData.gradingScale = (float[])DarkRubyGradingScale.Clone();
             AddLog($"Dark Ruby grading applied to LevelData: time={DarkRubyGradingTime}, " +
                 $"scale=[{string.Join(", ", DarkRubyGradingScale)}]");
+        }
+
+
+        public string GetObjectiveText()
+        {
+            var boss = GameData.FindByKey(_goalBossKey);
+            string goalBossName = boss != null ? boss.Name : _goalBossKey;
+            
+            string sigil = null;
+            bool hasSigil = false;
+            if (boss != null)
+            {
+                string portalLevel = GetPortalLevelForBoss(boss.Level);
+                sigil = GetRequiredSigilForPortal(portalLevel);
+                if (!string.IsNullOrEmpty(sigil))
+                    hasSigil = State.HasItem(sigil);
+            }
+
+            string colorGreen = "#4a6e3e"; 
+            string colorRed = "#8b3636";
+            string text = "";
+
+            if (_goalBossKillsRequired > 0)
+            {
+                int currentKills = CurrentBossKillCount;
+                string color = currentKills >= _goalBossKillsRequired ? colorGreen : colorRed;
+                text += $"<color={color}>• Kill {_goalBossKillsRequired} Bosses</color> (Current: {currentKills})\n";
+            }
+            
+            string bossColor = State.GoalSent ? colorGreen : colorRed;
+            text += $"<color={bossColor}>• Kill <b>{goalBossName}</b></color>\n";
+            
+            if (!string.IsNullOrEmpty(sigil))
+            {
+                string sigilColor = hasSigil ? colorGreen : colorRed;
+                text += $"<color={sigilColor}>• Find <b>{sigil}</b></color>\n";
+            }
+            
+            return text;
         }
     }
 

@@ -109,6 +109,7 @@ namespace RubiniteAP
             PendingDust = 0;
             LastKnownDust = 0;
             ChallengeSaveInitialized = false;
+            DeathsSinceLastSend = 0;
             Save();
         }
 

@@ -4,6 +4,7 @@ using HarmonyLib;
 using UnityEngine;
 using Cinemachine;
 using Game.Level;
+using TMPro;
 using PugTool.Unity.Singleton;
 using PugTool.Unity.StringList;
 
@@ -371,7 +372,26 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(CreateTalismanSelection), "Setup")]
     internal static class CreateTalismanSetupPatch
     {
-        private static void Postfix(CreateTalismanSelection __instance)
+        private static void Prefix(CreateTalismanSelection __instance, out int __state)
+        {
+            __state = -1;
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+            var td = __instance.talismanData;
+            if (td == null) return;
+
+            int effective = bridge.GetEffectiveShopPrice(td);
+            if (effective != td.costDust)
+            {
+                int original = td.costDust;
+                if (CreateTalismanClickPricePatch.TrySetCostDust(td, effective))
+                {
+                    __state = original;
+                }
+            }
+        }
+
+        private static void Postfix(CreateTalismanSelection __instance, int __state)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
@@ -389,7 +409,6 @@ namespace RubiniteAP
                 return;
             }
 
-            // Price display override
             int effective = bridge.GetEffectiveShopPrice(__instance.talismanData);
             if (effective != __instance.talismanData.costDust)
             {
@@ -406,6 +425,11 @@ namespace RubiniteAP
             if (bridge.TryGetScoutedShopItem(displayName, out var apItemName))
             {
                 ReplaceShopDisplay(__instance, displayName, apItemName);
+            }
+
+            if (__state >= 0 && __instance.talismanData != null)
+            {
+                CreateTalismanClickPricePatch.TrySetCostDust(__instance.talismanData, __state);
             }
         }
 
@@ -774,15 +798,32 @@ namespace RubiniteAP
         }
     }
 
-    [HarmonyPatch(typeof(SkillTreeFrame), "Update")]
+        [HarmonyPatch(typeof(SkillTreeFrame), "Update")]
     internal static class SkillTreeFrameUpdatePatch
     {
-        private static void Prefix(SkillTreeFrame __instance)
+        // Reflection, um den read-only Preis temporär zu überschreiben
+        private static readonly System.Reflection.FieldInfo _costBackingField = 
+            typeof(SkillTreeData).GetField("<cost>k__BackingField", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        private static void SetSkillCost(SkillTreeData data, int newCost)
         {
+            if (_costBackingField != null)
+                _costBackingField.SetValue(data, newCost);
+        }
+
+        private static void Prefix(SkillTreeFrame __instance, out int __state)
+        {
+            __state = -1;
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
             var data = __instance.skillTreeData;
             if (data == null) return;
+
+            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var p) && p != data.cost)
+            {
+                __state = data.cost;
+                SetSkillCost(data, p); // Preis temporär überschreiben
+            }
 
             bool received = bridge.IsSkillReceived(data.DisplayName);
             bool purchased = bridge.IsSkillPurchased(data.DisplayName);
@@ -794,8 +835,11 @@ namespace RubiniteAP
             }
         }
 
-        private static void Postfix(SkillTreeFrame __instance)
+        private static void Postfix(SkillTreeFrame __instance, int __state)
         {
+            if (__state >= 0 && __instance.skillTreeData != null)
+                SetSkillCost(__instance.skillTreeData, __state);
+
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
             var data = __instance.skillTreeData;
@@ -1258,6 +1302,88 @@ namespace RubiniteAP
             lm.levelTimer.Resume();
             bridge.DarkRubyTimerPausedForCutscene = false;
             bridge.AddLog($"Dark Ruby: timer resumed after '{bridge.LastDarkRubyCutsceneName}'");
+        }
+    }
+
+    [HarmonyPatch(typeof(StatusMenu), "Enter")]
+    internal static class StatusMenuEnterPatch
+    {
+        private static void Postfix(StatusMenu __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            Transform currentMission = null;
+            foreach (var t in __instance.GetComponentsInChildren<Transform>(true))
+            {
+                if (t.name == "CurrentMission")
+                {
+                    currentMission = t;
+                    break;
+                }
+            }
+
+            if (currentMission == null) return;
+
+            Transform apTextTransform = currentMission.Find("AP_ObjectiveText");
+            TextMeshProUGUI apText;
+
+            if (apTextTransform == null)
+            {
+                var titleObj = currentMission.Find("TitleText (TMP)_CurrentMission");
+                var titleTmp = titleObj?.GetComponent<TextMeshProUGUI>();
+                var titleRt = titleObj?.GetComponent<RectTransform>();
+
+                var go = new GameObject("AP_ObjectiveText");
+                go.transform.SetParent(currentMission, false);
+                
+                var rt = go.AddComponent<RectTransform>();
+                
+                if (titleRt != null)
+                {
+                    rt.anchorMin = titleRt.anchorMin;
+                    rt.anchorMax = titleRt.anchorMax;
+                    rt.pivot = new Vector2(0f, 1f); 
+
+                    float leftX = titleRt.anchoredPosition.x - (titleRt.sizeDelta.x * titleRt.pivot.x);
+                    
+                    rt.anchoredPosition = new Vector2(leftX + 10f, titleRt.anchoredPosition.y - 60f); 
+                    rt.sizeDelta = new Vector2(400f, 300f); 
+                }
+                else
+                {
+                    rt.anchorMin = new Vector2(0, 1);
+                    rt.anchorMax = new Vector2(0, 1);
+                    rt.pivot = new Vector2(0f, 1f);
+                    rt.anchoredPosition = new Vector2(50f, -100f);
+                    rt.sizeDelta = new Vector2(400f, 300f);
+                }
+
+                apText = go.AddComponent<TextMeshProUGUI>();
+                
+                if (titleTmp != null)
+                {
+                    apText.font = titleTmp.font;
+                    apText.color = new Color32(80, 50, 30, 255); 
+                }
+                else
+                {
+                    apText.color = new Color32(80, 50, 30, 255);
+                }
+                
+                apText.fontSize = 24; 
+                apText.alignment = TextAlignmentOptions.TopLeft;
+                apText.enableWordWrapping = true;
+                apText.richText = true;
+                apText.lineSpacing = 10f; 
+            }
+            else
+            {
+                apText = apTextTransform.GetComponent<TextMeshProUGUI>();
+            }
+
+            string header = "<b><size=26>Your Current AP Tasks:</size></b>\n\n";
+            apText.text = header + bridge.GetObjectiveText();
         }
     }
 }

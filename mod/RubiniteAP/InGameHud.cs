@@ -30,12 +30,13 @@ namespace RubiniteAP
         private Sprite _panelSprite;
 
         private int _lastReceivedCount = -1;
-        private int _lastSentCount = -1;
+        private HashSet<long> _shownSentLocations = new HashSet<long>();
         private bool _userEnabled = true;
 
         private GameObject _pausePanel;
         private RectTransform _pauseListContent;
-        private int _lastPauseHistoryCount = -1; 
+        private int _lastPauseHistoryCount = -1;
+        private int _lastPauseCheckedCount = -1;
 
         private GameObject _trackerPanel;
         private GameObject _tooltipPanel;
@@ -101,7 +102,8 @@ namespace RubiniteAP
             
             _bridge.DeathLinkReceivedMessage += OnIncomingDeathLink;
             _lastReceivedCount = bridge.GetReceivedHistory().Count;
-            _lastSentCount = bridge.GetSentHistory().Count();
+            foreach (var sent in bridge.GetSentHistory())
+                _shownSentLocations.Add(sent.LocationId);
 
             UpdateVisibility();
         }
@@ -609,9 +611,12 @@ namespace RubiniteAP
             if (isPaused)
             {
                 int currentHistoryCount = _bridge.GetReceivedHistory().Count;
-                if (_lastPauseHistoryCount != currentHistoryCount)
+                int currentCheckedCount = _bridge.State.Checked.Count;
+
+                if (_lastPauseHistoryCount != currentHistoryCount || _lastPauseCheckedCount != currentCheckedCount)
                 {
                     _lastPauseHistoryCount = currentHistoryCount;
+                    _lastPauseCheckedCount = currentCheckedCount;
                     UpdatePausePanel();
                     UpdateSigilTracker();
                 }
@@ -621,6 +626,7 @@ namespace RubiniteAP
             }
             else
             {
+                _lastPauseCheckedCount = -1;
                 _container.gameObject.SetActive(true);
                 HideTooltip(); 
                 _lastPauseHistoryCount = -1;
@@ -643,27 +649,19 @@ namespace RubiniteAP
                 }
 
                 var sent = _bridge.GetSentHistory().ToList();
-                if (sent.Count > _lastSentCount)
+                foreach (var s in sent)
                 {
-                    for (int i = _lastSentCount; i < sent.Count; i++)
-                    {
-                        var s = sent[i];
-                        if (receivedSourceIds.Contains(s.LocationId)) continue;
+                    if (_shownSentLocations.Contains(s.LocationId)) continue;
+                    
+                    _shownSentLocations.Add(s.LocationId);
 
-                        var icon = _bridge.PickIconForItem(s.ItemName);
-                        var locName = s.LocationDisplayName ?? "a check";
+                    if (receivedSourceIds.Contains(s.LocationId)) continue;
 
-                        if (s.RecipientSlot == _bridge.MySlot)
-                        {
-                            continue; 
-                        }
-                        else
-                        {
-                            string recipient = _bridge.GetSlotName(s.RecipientSlot);
-                            AddToast("Sent", s.ItemName, "to " + recipient, icon, s.Flags);
-                        }
-                    }
-                    _lastSentCount = sent.Count;
+                    if (s.RecipientSlot == _bridge.MySlot) continue;
+
+                    var icon = _bridge.PickIconForItem(s.ItemName);
+                    string recipient = _bridge.GetSlotName(s.RecipientSlot);
+                    AddToast("Sent", s.ItemName, "to " + recipient, icon, s.Flags);
                 }
                 
                 UpdateToasts();
@@ -728,10 +726,6 @@ namespace RubiniteAP
 
         private void UpdateSigilTracker()
         {
-            int activeBosses = 0;
-            foreach (var boss in GameData.Bosses)
-                if (_bridge.IsBossActive(boss.Key)) activeBosses++;
-
             foreach (Transform child in _trackerPanel.transform)
                 Destroy(child.gameObject);
             _hoverTargets.Clear();
@@ -744,6 +738,21 @@ namespace RubiniteAP
 
                 bool unlocked = _bridge.IsBossUnlockedPublic(boss);
                 
+                bool allChecksDone = true;
+                bool hasEnabledChecks = false;
+                for (int i = 0; i < 5; i++)
+                {
+                    if (!_bridge.IsCheckEnabled(boss.Level, i)) continue;
+                    hasEnabledChecks = true;
+                    if (!_bridge.State.HasChecked(boss.LocationBase + i)) 
+                    { 
+                        allChecksDone = false; 
+                        break; 
+                    }
+                }
+
+                if (!hasEnabledChecks) allChecksDone = false;
+
                 var nodeGo = new GameObject(boss.Key);
                 nodeGo.transform.SetParent(_trackerPanel.transform, false);
 
@@ -751,12 +760,19 @@ namespace RubiniteAP
                 if (frameBgSprite != null)
                 {
                     bgImg.sprite = frameBgSprite;
-                    bgImg.color = unlocked ? Color.white : new Color(0.4f, 0.4f, 0.4f, 1f);
+
+                    if (allChecksDone)
+                        bgImg.color = new Color(0.6f, 1f, 0.6f, 1f);
+                    else
+                        bgImg.color = unlocked ? Color.white : new Color(0.4f, 0.4f, 0.4f, 1f);
                 }
                 else
                 {
                     bgImg.sprite = _panelSprite;
-                    bgImg.color = unlocked ? Color.white : new Color(0.3f, 0.3f, 0.3f, 0.8f);
+                    if (allChecksDone)
+                        bgImg.color = new Color(0.6f, 1f, 0.6f, 1f);
+                    else
+                        bgImg.color = unlocked ? Color.white : new Color(0.3f, 0.3f, 0.3f, 0.8f);
                 }
 
                 var rt = nodeGo.GetComponent<RectTransform>();
@@ -767,7 +783,11 @@ namespace RubiniteAP
                 var iconImg = iconGo.AddComponent<Image>();
                 iconImg.sprite = _bridge.PickIconForItem(boss.Sigil ?? boss.Key + " Sigil");
                 iconImg.preserveAspect = true;
-                iconImg.color = unlocked ? Color.white : new Color(0.2f, 0.2f, 0.2f, 1f);
+                
+                if (allChecksDone)
+                    iconImg.color = new Color(0.8f, 1f, 0.8f, 1f);
+                else
+                    iconImg.color = unlocked ? Color.white : new Color(0.2f, 0.2f, 0.2f, 1f);
 
                 var iconRt = iconGo.GetComponent<RectTransform>();
                 iconRt.anchorMin = new Vector2(0.5f, 0.5f);
