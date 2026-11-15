@@ -115,6 +115,9 @@ namespace RubiniteAP
 
         private int _requiredRankIndex = 0;
 
+        private int _baseShopSlots = 30;
+        private int _slotsPerBossKill = 0;
+        private int _slotsPerShopExpansion = 0;
         private string _shopPriceMode = "vanilla";
         private bool _shopProgressionEnabled;
         private int _startingShopGroups;
@@ -338,6 +341,9 @@ namespace RubiniteAP
             }
 
             _startingShopGroups = info.SlotData?["starting_shop_groups"]?.Value<int>() ?? 0;
+            _baseShopSlots = info.SlotData?["base_shop_slots"]?.Value<int>() ?? 30;
+            _slotsPerBossKill = info.SlotData?["slots_per_boss_kill"]?.Value<int>() ?? 0;
+            _slotsPerShopExpansion = info.SlotData?["slots_per_shop_expansion"]?.Value<int>() ?? 0;
 
             _fillerDustValues.Clear();
             _fillerIconNames.Clear();
@@ -3674,6 +3680,76 @@ namespace RubiniteAP
             }
             
             return text;
+        }
+
+        public int GetUnlockedShopSlotCount()
+        {
+            int unlocked = _baseShopSlots;
+            if (_shopProgressionEnabled)
+            {
+                int expansions = 0;
+                foreach (var item in State.Items)
+                    if (item == "Shop Expansion") expansions++;
+                unlocked += expansions * _slotsPerShopExpansion;
+            }
+            else
+            {
+                unlocked += CurrentBossKillCount * _slotsPerBossKill;
+            }
+            return Mathf.Min(unlocked, 45);
+        }
+
+        public long GetShopLocationIdForIndex(int index)
+        {
+            if (index < 30)
+            {
+                if (_shopLocationIds.Count > 0)
+                {
+                    var keys = new List<string>(_shopLocationIds.Keys);
+                    if (index < keys.Count) return _shopLocationIds[keys[index]];
+                }
+                return 0;
+            }
+            else
+            {
+                string title = $"Slot {index + 1}";
+                foreach (var kv in _shopLocationIds)
+                {
+                    if (kv.Key.EndsWith(title)) return kv.Value;
+                }
+                return 0;
+            }
+        }
+
+        public void HandleShopPurchaseById(long locId, string slotName)
+        {
+            if (!ApRunActive) return;
+            AddLog($"Shop Purchase Attempt: '{slotName}' (ID: {locId})");
+
+            if (!State.HasChecked(locId))
+            {
+                State.AddChecked(new List<long> { locId });
+                State.Save();
+                if (Client.IsConnected) Client.SendLocationChecks(new List<long> { locId });
+                AddLog("Shop Check Sent: " + slotName);
+            }
+            else
+            {
+                AddLog("Shop Check already checked: " + slotName);
+            }
+
+            var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
+            if (menu != null)
+            {
+                foreach (var sel in menu.GetComponentsInChildren<CreateTalismanSelection>())
+                {
+                    if (sel.gameObject.name.Contains(slotName))
+                    {
+                        sel.gameObject.SetActive(false);
+                    }
+                }
+            }
+            ApplyRuntime(true);
         }
     }
 

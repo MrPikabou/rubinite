@@ -141,6 +141,7 @@ SHOP_GROUPS = 6
 SHOP_SLOTS_PER_GROUP = 5
 SHOP_EXPANSION_ITEM = "Shop Expansion"
 SHOP_EXPANSION_ITEM_ID = 72400
+MAX_SHOP_SLOTS = 80
 
 
 # Base IDs. Location and item ranges are intentionally separate.

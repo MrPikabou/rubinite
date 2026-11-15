@@ -86,6 +86,9 @@ class RubiniteWorld(World):
             "player_color": self.options.player_color.current_key,
             "shop_locations": shop_location_ids,
             "shop_groups": self._shop_groups,
+            "base_shop_slots": self.options.base_shop_slots.value,
+            "slots_per_boss_kill": self.options.slots_per_boss_kill.value,
+            "slots_per_shop_expansion": self.options.slots_per_shop_expansion.value,
             "progressive_shop": self.options.progressive_shop.value,
             "starting_shop_groups": self.options.starting_shop_groups.value,
             "shop_price_mode": self.options.shop_price_mode.current_key,
@@ -143,17 +146,12 @@ class RubiniteWorld(World):
         self._skill_prices = self._compute_skill_prices() 
         self._validate_item_location_balance()
 
-    def _validate_item_location_balance(self) -> None:
-        """Ensure progression items fit into available locations.
-
-        Right now this can never trigger (worst case is ~18 progression items
-        against ~43 locations), but it fails fast with a clear message if a
-        future change adds more progression-classified items or option
-        combinations that would otherwise crash inside the filler.
-        """
+        def _validate_item_location_balance(self) -> None:
+        """Ensure progression items fit into available locations."""
         enabled_checks = self.get_enabled_check_types()
         boss_locations = len(self.active_bosses) * len(enabled_checks)
-        shop_locations = len(data.TALISMANS)
+        shop_locations = data.MAX_SHOP_SLOTS
+        
         skill_tree_locations = len(data.SKILLS)
         total_locations = boss_locations + shop_locations + skill_tree_locations
 

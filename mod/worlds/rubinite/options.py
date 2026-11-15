@@ -121,6 +121,28 @@ class ProgressiveShop(Toggle):
     default = False
 
 
+class BaseShopSlots(Range):
+    """Number of shop slots available from the start."""
+    display_name = "Base Shop Slots"
+    range_start = 30
+    range_end = 45
+    default = 30
+
+class SlotsPerBossKill(Range):
+    """How many extra shop slots unlock per unique boss kill (only if Progressive Shop is off)."""
+    display_name = "Slots per Boss Kill"
+    range_start = 0
+    range_end = 5
+    default = 0
+
+class SlotsPerShopExpansion(Range):
+    """How many extra shop slots unlock per Shop Expansion (only if Progressive Shop is on)."""
+    display_name = "Slots per Shop Expansion"
+    range_start = 0
+    range_end = 5
+    default = 0
+
+
 class StartingShopGroups(Range):
     """How many shop groups are unlocked from the start when ProgressiveShop is enabled."""
     display_name = "Starting Shop Groups"
@@ -222,8 +244,11 @@ class RubiniteOptions(PerGameCommonOptions):
     enable_flawless_clear: EnableFlawlessClear
     enable_rank_clear: EnableRankClear
     required_rank: RequiredRank
+    base_shop_slots: BaseShopSlots
     progressive_shop: ProgressiveShop
     starting_shop_groups: StartingShopGroups
+    slots_per_boss_kill : SlotsPerBossKill
+    slot_per_shop_expansion : SlotsPerShopExpansion
     shop_price_mode: ShopPriceMode
     shop_price_min: ShopPriceMin
     shop_price_max: ShopPriceMax
@@ -257,8 +282,11 @@ class RubiniteWebWorld(WebWorld):
             RequiredRank,
         ]),
         OptionGroup("Shop & Skill Prices", [
+            BaseShopSlots,
             ProgressiveShop,
             StartingShopGroups,
+            SlotsPerBossKill,
+            SlotsPerShopExpansion,
             ShopPriceMode,
             ShopPriceMin,
             ShopPriceMax,

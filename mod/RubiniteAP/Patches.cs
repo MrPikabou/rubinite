@@ -358,12 +358,22 @@ namespace RubiniteAP
         private static void Postfix(CreateTalismanSelection __instance)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge != null && bridge.ApRunActive)
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            if (__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
             {
-                // Pass the display name to match with the APWorld titles
+                int index = int.Parse(__instance.gameObject.name.Replace("AP_ExtraSlot_", ""));
+                long locId = bridge.GetShopLocationIdForIndex(index);
+                if (locId > 0)
+                {
+                    bridge.HandleShopPurchaseById(locId, $"Slot {index + 1}");
+                }
+                return;
+            }
+
+            if (bridge.ApRunActive)
+            {
                 bridge.HandleShopPurchase(__instance.talismanData.DisplayName);
-                
-                // Re-lock it immediately in the game data so it doesn't stay permanently unlocked
                 __instance.talismanData.state.SetValue(AchievementState.Lock);
             }
         }
@@ -393,6 +403,19 @@ namespace RubiniteAP
 
         private static void Postfix(CreateTalismanSelection __instance, int __state)
         {
+            if (__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
+            {
+                int index = int.Parse(__instance.gameObject.name.Replace("AP_ExtraSlot_", ""));
+                var bridge = RubiniteAPPlugin.Instance?.Bridge;
+                
+                foreach (var tmp in __instance.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
+                {
+                    if (tmp.gameObject.name == "Name_Text (TMP)") tmp.text = $"Slot {index + 1}";
+                    if (tmp.gameObject.name == "Cost (TMP)") tmp.text = "200";
+                }
+                return;
+            }
+
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
 
@@ -1384,6 +1407,49 @@ namespace RubiniteAP
 
             string header = "<b><size=26>Your Current AP Tasks:</size></b>\n\n";
             apText.text = header + bridge.GetObjectiveText();
+        }
+    }
+
+    [HarmonyPatch(typeof(CreateItemMenu), "Enter")]
+    internal static class CreateItemMenuEnterPatch
+    {
+        private static void Postfix(CreateItemMenu __instance)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive) return;
+
+            int targetSlots = bridge.GetUnlockedShopSlotCount();
+            if (targetSlots <= 30) return;
+
+            var grid = __instance.GetComponentInChildren<GridLayoutGroup>();
+            if (grid == null) return;
+
+            RubiniteAPPlugin.Instance.StartCoroutine(ExpandShopSlotsNextFrame(grid, targetSlots));
+        }
+
+        private static IEnumerator ExpandShopSlotsNextFrame(GridLayoutGroup grid, int targetSlots)
+        {
+            yield return null;
+
+            int currentSlots = grid.transform.childCount;
+            if (currentSlots == 0) yield break;
+
+            var template = grid.transform.GetChild(currentSlots - 1).gameObject;
+
+            for (int i = currentSlots; i < targetSlots; i++)
+            {
+                var clone = UnityEngine.Object.Instantiate(template, grid.transform);
+                clone.name = "AP_ExtraSlot_" + i;
+
+                var original = clone.GetComponent<CreateTalismanSelection>();
+                if (original != null)
+                {
+                    clone.name = "AP_ExtraSlot_" + i;
+                    
+                    var label = clone.GetComponentInChildren<TMPro.TextMeshProUGUI>();
+                    if (label != null) label.text = $"Slot {i + 1}";
+                }
+            }
         }
     }
 }

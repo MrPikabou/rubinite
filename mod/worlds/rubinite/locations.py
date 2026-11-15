@@ -20,14 +20,18 @@ def _build_locations() -> dict[str, int]:
                 data.LOCATION_BASE + boss_index * len(data.CHECK_TYPES) + check_index
             )
             
-    for shop_index, (title, _) in enumerate(data.TALISMANS):
-        mapping[data.shop_location_name(title)] = data.SHOP_LOCATION_BASE + shop_index
+    for shop_index in range(data.MAX_SHOP_SLOTS):
+        if shop_index < len(data.TALISMANS):
+            title = data.TALISMANS[shop_index][0]
+            name = data.shop_location_name(title)
+        else:
+            name = f"Wichiwi Shop: Slot {shop_index + 1}"
+        mapping[name] = data.SHOP_LOCATION_BASE + shop_index
 
     for skill_index, (tree_id, title) in enumerate(data.SKILLS):
         mapping[data.skill_tree_location_name(tree_id, title)] = (
             data.SKILL_TREE_LOCATION_BASE + skill_index
         )
-        
     return mapping
 
 
@@ -51,8 +55,11 @@ def create_all_locations(world: RubiniteWorld) -> None:
             region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
 
     shop_region = world.get_region("Wichiwi Shop")
-    for title, _ in data.TALISMANS:
-        name = data.shop_location_name(title)
+    for shop_index in range(data.MAX_SHOP_SLOTS):
+        if shop_index < len(data.TALISMANS):
+            name = data.shop_location_name(data.TALISMANS[shop_index][0])
+        else:
+            name = f"Wichiwi Shop: Slot {shop_index + 1}"
         shop_region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
 
     # Skill tree purchases are reachable from the Challenge Area (the
