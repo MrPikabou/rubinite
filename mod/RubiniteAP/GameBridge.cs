@@ -58,10 +58,6 @@ namespace RubiniteAP
         public bool DarkRubyCompleted { get; set; }
         private bool _isHardcodedDarkRubyActive = false;
         public bool IsHardcodedDarkRubyActive => _isHardcodedDarkRubyActive;
-        public event Action<ConnectedInfo> SlotDataLoaded;
-        public event Action ChallengeAreaEntered;
-        public event Action<string, string> PortalRemapped;
-
         public bool DarkRubyDeathHandled { get; set; }
         public bool DarkRubyTimerPausedForCutscene { get; set; }
         public string LastDarkRubyCutsceneName { get; set; }
