@@ -248,7 +248,7 @@ class RubiniteOptions(PerGameCommonOptions):
     progressive_shop: ProgressiveShop
     starting_shop_groups: StartingShopGroups
     slots_per_boss_kill : SlotsPerBossKill
-    slot_per_shop_expansion : SlotsPerShopExpansion
+    slots_per_shop_expansion: SlotsPerShopExpansion
     shop_price_mode: ShopPriceMode
     shop_price_min: ShopPriceMin
     shop_price_max: ShopPriceMax

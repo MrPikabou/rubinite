@@ -98,15 +98,15 @@
       <HintPath>$(ManagedDir)UnityEngine.ParticleSystemModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.ParticleSystemModule">
+    <Reference Include="Cinemachine">
       <HintPath>$(ManagedDir)Cinemachine.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.ParticleSystemModule">
+    <Reference Include="UnityEngine.DirectorModule">
       <HintPath>$(ManagedDir)UnityEngine.DirectorModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="UnityEngine.ParticleSystemModule">
+    <Reference Include="Unity.Timeline">
       <HintPath>$(ManagedDir)Unity.Timeline.dll</HintPath>
       <Private>false</Private>
     </Reference>

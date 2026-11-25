@@ -23,8 +23,6 @@ namespace RubiniteDarkRuby
         private Harmony _harmony;
 
         private static int _lastBeforeRenderFrame = -1;
-        private static int _lastPreRenderFrame = -1;
-
         private void Awake()
         {
             Instance = this;
@@ -68,14 +66,6 @@ namespace RubiniteDarkRuby
             Application.onBeforeRender -= OnApplicationBeforeRender;
         }
 
-        private static void OnCameraPreRender(Camera cam)
-        {
-            if (Time.frameCount == _lastPreRenderFrame) return;
-            _lastPreRenderFrame = Time.frameCount;
-            try { Instance?.Module?.PreRenderSkinApply(); }
-            catch (Exception ex) { Log?.LogWarning("PreRenderSkinApply: " + ex.Message); }
-        }
-        
         private static void OnApplicationBeforeRender()
         {
             if (Time.frameCount == _lastBeforeRenderFrame) return;

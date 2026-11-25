@@ -143,10 +143,10 @@ class RubiniteWorld(World):
         self._starting_boss_keys = self._compute_starting_bosses()
         self._shop_groups = self._compute_shop_groups()
         self._shop_prices = self._compute_shop_prices()
-        self._skill_prices = self._compute_skill_prices() 
+        self._skill_prices = self._compute_skill_prices()
         self._validate_item_location_balance()
 
-        def _validate_item_location_balance(self) -> None:
+    def _validate_item_location_balance(self) -> None:
         """Ensure progression items fit into available locations."""
         enabled_checks = self.get_enabled_check_types()
         boss_locations = len(self.active_bosses) * len(enabled_checks)
@@ -164,7 +164,7 @@ class RubiniteWorld(World):
         total_progression = sigil_items + shop_expansion_items
 
         if total_progression > total_locations:
-            raise ValueError(
+            raise OptionError(
                 f"Rubinite progression items ({total_progression}) exceed "
                 f"available locations ({total_locations}). "
                 f"Reduce starting_boss_count or enable more check types."
@@ -200,7 +200,8 @@ class RubiniteWorld(World):
             return {}
         min_p = self.options.skill_price_min.value
         max_p = self.options.skill_price_max.value
-        if min_p > max_p: min_p, max_p = max_p, min_p
+        if min_p > max_p:
+            min_p, max_p = max_p, min_p
         return {
             tree_id: self.random.randint(min_p, max_p)
             for tree_id, _title in data.SKILLS

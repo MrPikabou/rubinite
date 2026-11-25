@@ -141,21 +141,31 @@ SHOP_GROUPS = 6
 SHOP_SLOTS_PER_GROUP = 5
 SHOP_EXPANSION_ITEM = "Shop Expansion"
 SHOP_EXPANSION_ITEM_ID = 72400
-MAX_SHOP_SLOTS = 80
+MAX_SHOP_SLOTS = 45
 
 
 # Base IDs. Location and item ranges are intentionally separate.
 LOCATION_BASE = 71000
 SHOP_LOCATION_BASE = 71100
 SKILL_TREE_LOCATION_BASE = 71200
+BOSS_CLEAR_LOCATION_BASE = 71300
 SIGIL_ITEM_BASE = 72000
 TALISMAN_ITEM_BASE = 72100
 SKILL_ITEM_BASE = 72200
 FILLER_ITEM_BASE = 72300
+BOSS_CLEAR_ITEM_BASE = 72500
 
 
 def location_name(boss_name: str, suffix: str) -> str:
     return f"{boss_name}: {suffix}"
+
+
+def boss_clear_location_name(boss_key: str) -> str:
+    return f"{boss_key}: Boss Defeated"
+
+
+def boss_clear_item_name(boss_key: str) -> str:
+    return f"Boss Defeated: {boss_key}"
 
 
 def talisman_item_name(title: str) -> str:
