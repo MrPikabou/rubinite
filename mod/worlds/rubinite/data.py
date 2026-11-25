@@ -57,11 +57,11 @@ DARK_RUBY_GRADING = {
 # Five checks per boss. Only the first clear may hold progression items; the four
 # challenge clears are optional skill checks and are kept free of progression.
 CHECK_TYPES = [
-    ("First Clear", "first"),
+    ("Defeated", "first"),
     ("No-Hit Clear", "nohit"),
     ("No-Talisman Clear", "notalisman"),
     ("Flawless Clear", "flawless"),
-    ("Target Rank Clear", "rank"),
+    ("Rank Clear", "rank"),
 ]
 
 OPTIONAL_CHECKS = ("nohit", "notalisman", "flawless", "rank")

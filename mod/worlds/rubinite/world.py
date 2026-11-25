@@ -50,6 +50,7 @@ class RubiniteWorld(World):
         enabled_slugs = [slug for _suffix, slug in enabled_checks]
 
         boss_data = []
+        boss_clear_location_ids = {}
         for key, name, level, _sigil in self.active_bosses:
             boss_checks = enabled_checks
             if key in data.RANKLESS_BOSSES:
@@ -70,6 +71,9 @@ class RubiniteWorld(World):
                     "locations": location_ids,
                 }
             )
+            boss_clear_location_ids[key] = locations.LOCATION_NAME_TO_ID[
+                data.boss_clear_location_name(key)
+            ]
         
         shop_location_ids = {
             talisman_id: locations.LOCATION_NAME_TO_ID[data.shop_location_name(title)]
@@ -77,14 +81,21 @@ class RubiniteWorld(World):
         }
 
         return {
-            "version": 2,
+            "version": 3,
             "goal_boss": self.get_goal_boss_key(),
             "item_ids": items.ITEM_NAME_TO_ID,
             "bosses": boss_data,
+            "boss_clear_locations": boss_clear_location_ids,
             "boss_scene_map": self._boss_scene_map,
             "required_rank": self.options.required_rank.value,
             "player_color": self.options.player_color.current_key,
             "shop_locations": shop_location_ids,
+            "extra_shop_locations": {
+                str(index): locations.LOCATION_NAME_TO_ID[
+                    f"Wichiwi Shop: Slot {index + 1}"
+                ]
+                for index in range(len(data.TALISMANS), self.max_shop_slots)
+            },
             "shop_groups": self._shop_groups,
             "base_shop_slots": self.options.base_shop_slots.value,
             "slots_per_boss_kill": self.options.slots_per_boss_kill.value,
@@ -144,13 +155,14 @@ class RubiniteWorld(World):
         self._shop_groups = self._compute_shop_groups()
         self._shop_prices = self._compute_shop_prices()
         self._skill_prices = self._compute_skill_prices()
+        self.max_shop_slots = self._compute_max_shop_slots()
         self._validate_item_location_balance()
 
     def _validate_item_location_balance(self) -> None:
         """Ensure progression items fit into available locations."""
         enabled_checks = self.get_enabled_check_types()
-        boss_locations = len(self.active_bosses) * len(enabled_checks)
-        shop_locations = data.MAX_SHOP_SLOTS
+        boss_locations = len(self.active_bosses) * (len(enabled_checks) + 1)
+        shop_locations = self.max_shop_slots
         
         skill_tree_locations = len(data.SKILLS)
         total_locations = boss_locations + shop_locations + skill_tree_locations
@@ -182,6 +194,20 @@ class RubiniteWorld(World):
             talisman_ids[i * data.SHOP_SLOTS_PER_GROUP:(i + 1) * data.SHOP_SLOTS_PER_GROUP]
             for i in range(data.SHOP_GROUPS)
         ]
+
+    def _compute_max_shop_slots(self) -> int:
+        starting_slots = max(len(data.TALISMANS), self.options.base_shop_slots.value)
+        if self.options.progressive_shop.value:
+            expansions = max(
+                0, data.SHOP_GROUPS - self.options.starting_shop_groups.value
+            )
+            extra_slots = expansions * self.options.slots_per_shop_expansion.value
+        else:
+            available_boss_clears = max(0, len(self.active_bosses) - 1)
+            extra_slots = (
+                available_boss_clears * self.options.slots_per_boss_kill.value
+            )
+        return min(data.MAX_SHOP_SLOTS, starting_slots + extra_slots)
     
     def _compute_shop_prices(self) -> dict[str, int]:
         if self.options.shop_price_mode.value != self.options.shop_price_mode.option_randomized:
@@ -264,8 +290,8 @@ class RubiniteWorld(World):
         return "Witch2"
     
     def get_enabled_check_types(self) -> list[tuple[str, str]]:
-        """Return the check types enabled for this seed. 'First Clear' is always on."""
-        enabled: list[tuple[str, str]] = [("First Clear", "first")]
+        """Return the check types enabled for this seed. 'Defeated' is always on."""
+        enabled: list[tuple[str, str]] = [("Defeated", "first")]
         if self.options.enable_nohit_clear.value:
             enabled.append(("No-Hit Clear", "nohit"))
         if self.options.enable_notalisman_clear.value:
@@ -273,5 +299,5 @@ class RubiniteWorld(World):
         if self.options.enable_flawless_clear.value:
             enabled.append(("Flawless Clear", "flawless"))
         if self.options.enable_rank_clear.value:
-            enabled.append(("Target Rank Clear", "rank"))
+            enabled.append(("Rank Clear", "rank"))
         return enabled

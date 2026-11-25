@@ -876,7 +876,7 @@ namespace RubiniteAP
             headerText += "\n"; 
             _tooltipText.text = headerText;
 
-            string[] checkNames = { "First Clear", "No-Hit", "No-Talisman", "Flawless", "Rank" };
+            string[] checkNames = { "Defeated", "No-Hit", "No-Talisman", "Flawless", "Rank" };
             for (int i = 0; i < 5; i++)
             {
                 if (!_bridge.IsCheckEnabled(boss.Level, i)) continue;

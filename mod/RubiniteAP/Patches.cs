@@ -10,6 +10,15 @@ using PugTool.Unity.StringList;
 
 namespace RubiniteAP
 {
+    [HarmonyPatch(typeof(DataSaver), "SaveFlag")]
+    internal static class ApChallengeSaveProfilePatch
+    {
+        private static void Postfix()
+        {
+            RubiniteAPPlugin.Instance?.Bridge?.PersistChallengeSaveProfile();
+        }
+    }
+
     [HarmonyPatch(typeof(ChallengeLevelPoint), "Init")]
     internal static class ChallengeLevelPointInitPatch
     {
@@ -368,6 +377,8 @@ namespace RubiniteAP
                 {
                     bridge.HandleShopPurchaseById(locId, $"Slot {index + 1}");
                 }
+                if (__instance.talismanData?.state != null)
+                    __instance.talismanData.state.SetValue(AchievementState.Lock);
                 return;
             }
 
@@ -390,7 +401,7 @@ namespace RubiniteAP
             var td = __instance.talismanData;
             if (td == null) return;
 
-            int effective = bridge.GetEffectiveShopPrice(td);
+            int effective = CreateTalismanClickPricePatch.GetEffectivePrice(__instance, bridge);
             if (effective != td.costDust)
             {
                 int original = td.costDust;
@@ -406,13 +417,14 @@ namespace RubiniteAP
             if (__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
             {
                 int index = int.Parse(__instance.gameObject.name.Replace("AP_ExtraSlot_", ""));
-                var bridge = RubiniteAPPlugin.Instance?.Bridge;
                 
                 foreach (var tmp in __instance.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
                 {
                     if (tmp.gameObject.name == "Name_Text (TMP)") tmp.text = $"Slot {index + 1}";
                     if (tmp.gameObject.name == "Cost (TMP)") tmp.text = "200";
                 }
+                if (__state >= 0 && __instance.talismanData != null)
+                    CreateTalismanClickPricePatch.TrySetCostDust(__instance.talismanData, __state);
                 return;
             }
 
@@ -587,7 +599,7 @@ namespace RubiniteAP
             var td = __instance.talismanData;
             if (td == null) return;
 
-            int effective = bridge.GetEffectiveShopPrice(td);
+            int effective = CreateTalismanClickPricePatch.GetEffectivePrice(__instance, bridge);
             if (effective == td.costDust) return;
 
             int original = td.costDust;
@@ -600,6 +612,13 @@ namespace RubiniteAP
             if (__state < 0) return;
             if (__instance.talismanData != null)
                 TrySetCostDust(__instance.talismanData, __state);
+        }
+
+        internal static int GetEffectivePrice(CreateTalismanSelection selection, GameBridge bridge)
+        {
+            return selection.gameObject.name.StartsWith("AP_ExtraSlot_")
+                ? 200
+                : bridge.GetEffectiveShopPrice(selection.talismanData);
         }
 
         internal static bool TrySetCostDust(TalismanData td, int value)
@@ -623,7 +642,12 @@ namespace RubiniteAP
                     return true;
                 }
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                RubiniteAPPlugin.Log?.LogWarning("Could not set talisman Blood Dust price: " + ex.Message);
+                return false;
+            }
+            RubiniteAPPlugin.Log?.LogWarning("TalismanData has no writable costDust member.");
             return false;
         }
     }
@@ -639,7 +663,7 @@ namespace RubiniteAP
             var td = __instance.talismanData;
             if (td == null) return;
 
-            int effective = bridge.GetEffectiveShopPrice(td);
+            int effective = CreateTalismanClickPricePatch.GetEffectivePrice(__instance, bridge);
             if (effective == td.costDust) return;
 
             int original = td.costDust;

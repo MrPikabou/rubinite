@@ -34,6 +34,12 @@ SIGIL_IDS = {
 
 def _build_names() -> dict[str, int]:
     names: dict[str, int] = dict(SIGIL_IDS)
+    names.update(
+        {
+            data.boss_clear_item_name(key): data.BOSS_CLEAR_ITEM_BASE + index
+            for index, (key, _boss_name, _level, _sigil) in enumerate(data.BOSSES)
+        }
+    )
     for i, (title, _talisman_id) in enumerate(data.TALISMANS):
         names[data.talisman_item_name(title)] = data.TALISMAN_ITEM_BASE + i
     for i, (tree_id, title) in enumerate(data.SKILLS):
@@ -49,7 +55,11 @@ ITEM_NAME_TO_ID = _build_names()
 # All sigils are progression. Shop Expansions are progression too, because the
 # shop locations they unlock can themselves contain progression (further sigils
 # or more Shop Expansions). Everything else is useful or filler.
-PROGRESSION_ITEMS = set(SIGIL_IDS.keys()) | {data.SHOP_EXPANSION_ITEM}
+PROGRESSION_ITEMS = (
+    set(SIGIL_IDS.keys())
+    | {data.SHOP_EXPANSION_ITEM}
+    | {data.boss_clear_item_name(key) for key, _name, _level, _sigil in data.BOSSES}
+)
 FILLER_ITEM_NAMES = {name for name, _id, _w, _d, _i in data.FILLER_ITEMS}
 
 

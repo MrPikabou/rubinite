@@ -66,7 +66,7 @@ namespace RubiniteAP
 
         public static readonly string[] CheckSuits =
         {
-            "First Clear", "No-Hit Clear", "No-Talisman Clear", "Flawless Clear", "S-Rank Clear"
+            "Defeated", "No-Hit Clear", "No-Talisman Clear", "Flawless Clear", "Rank Clear"
         };
 
         // Talisman item name (without the "Talisman: " prefix) -> TalismanData uniqueId.

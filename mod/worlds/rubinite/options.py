@@ -106,7 +106,7 @@ class EnableRankClear(Toggle):
 
 
 class RequiredRank(Choice):
-    """Which rank is required to unlock the Rank Clear check (S is hardest, C is easiest)."""
+    """Which rank is required; actual rank performance is not modeled as AP item logic."""
     display_name = "Required Rank"
     option_s = 0
     option_a = 1
@@ -152,7 +152,7 @@ class StartingShopGroups(Range):
 
 
 class ShopPriceMode(Choice):
-    """Use vanilla shop prices or randomize every shop price slot."""
+    """Use vanilla prices or randomize prices."""
     display_name = "Shop Price Mode"
     option_vanilla = 0
     option_randomized = 1

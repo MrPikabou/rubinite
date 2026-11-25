@@ -40,6 +40,8 @@ namespace RubiniteAP
         private readonly Dictionary<string, HashSet<string>> _bossEnabledChecks = new();
 
         private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
+        private readonly Dictionary<int, long> _extraShopLocationIds = new Dictionary<int, long>();
+        private readonly Dictionary<string, long> _bossClearLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _effectiveShopPrices = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _effectiveSkillPrices = new Dictionary<string, int>();
@@ -229,11 +231,16 @@ namespace RubiniteAP
             if (string.IsNullOrEmpty(slot))
                 slot = info.SeedName;
 
-            var seedChanged = !string.IsNullOrEmpty(info.SeedName) && State.Seed != info.SeedName;
-            var slotChanged = !string.IsNullOrEmpty(State.Slot) && State.Slot != slot;
-            if (string.IsNullOrEmpty(State.Slot) || State.Slot != slot || seedChanged || slotChanged)
+            var seed = info.SeedName ?? "";
+            var profileChanged = State.Slot != slot || State.Seed != seed;
+            if (profileChanged)
             {
-                State.ResetForSlot(slot, info.SeedName);
+                if (!State.LoadProfile(slot, seed))
+                {
+                    Client.Disconnect();
+                    AddLog("Connection aborted because this AP profile could not be loaded.");
+                    return;
+                }
                 _needsFullLock = true;
                 DarkRubyCompleted = false;
                 _receivedHistory.Clear();
@@ -242,7 +249,7 @@ namespace RubiniteAP
             else
             {
                 State.Slot = slot;
-                State.Seed = info.SeedName;
+                State.Seed = seed;
                 State.Save();
             }
 
@@ -265,6 +272,18 @@ namespace RubiniteAP
                         _shopLocationIds[prop.Name] = id;
                 }
                 AddLog("Shop locations loaded (" + _shopLocationIds.Count + " entries).");
+            }
+
+            _extraShopLocationIds.Clear();
+            if (info.SlotData?["extra_shop_locations"] is JObject extraShopLocations)
+            {
+                foreach (var prop in extraShopLocations.Properties())
+                {
+                    if (int.TryParse(prop.Name, out var index)
+                        && long.TryParse(prop.Value.ToString(), out var id))
+                        _extraShopLocationIds[index] = id;
+                }
+                AddLog("Extra shop locations loaded (" + _extraShopLocationIds.Count + " entries).");
             }
 
             if (_shopLocationIds.Count > 0)
@@ -419,6 +438,17 @@ namespace RubiniteAP
                 AddLog("Boss slot info loaded (" + _bossSlotInfoByLevel.Count + " entries).");
             }
 
+            _bossClearLocationIds.Clear();
+            if (info.SlotData?["boss_clear_locations"] is JObject bossClearLocations)
+            {
+                foreach (var prop in bossClearLocations.Properties())
+                {
+                    if (long.TryParse(prop.Value.ToString(), out var id))
+                        _bossClearLocationIds[prop.Name] = id;
+                }
+                AddLog("Boss clear checks loaded (" + _bossClearLocationIds.Count + " entries).");
+            }
+
             if (info.SlotData?["dark_ruby_grading"] is JObject drg)
             {
                 DarkRubyGradingTime = drg["grading_time"]?.Value<float>() ?? 60f;
@@ -561,7 +591,14 @@ namespace RubiniteAP
             foreach (var boss in GameData.Bosses)
             {
                 if (boss.Key == _goalBossKey) continue;
-                if (State.HasChecked(boss.LocationBase)) count++;
+                if (_bossClearLocationIds.TryGetValue(boss.Key, out var clearLocationId))
+                {
+                    if (State.HasChecked(clearLocationId)) count++;
+                }
+                else if (State.HasChecked(boss.LocationBase))
+                {
+                    count++;
+                }
             }
             return count;
         }
@@ -641,18 +678,19 @@ namespace RubiniteAP
         /// <summary>
         /// Returns the price the shop should charge for this slot.
         /// Randomized mode: pre-computed price from slot_data.
-        /// Vanilla mode: the talisman's own costDust.
+        /// Vanilla mode: the talisman's own costDust, with free slots raised to 100.
         /// </summary>
         public int GetEffectiveShopPrice(TalismanData talismanData)
         {
             if (talismanData == null) return 0;
-            if (_shopPriceMode == "randomized"
-                && !string.IsNullOrEmpty(talismanData.DisplayName)
-                && _effectiveShopPrices.TryGetValue(talismanData.DisplayName, out var price))
+            if (_shopPriceMode == "randomized")
             {
-                return price;
+                if (!string.IsNullOrEmpty(talismanData.DisplayName)
+                    && _effectiveShopPrices.TryGetValue(talismanData.DisplayName, out var price))
+                    return price;
+                return talismanData.costDust;
             }
-            return talismanData.costDust;
+            return talismanData.costDust == 0 ? 100 : talismanData.costDust;
         }
 
         public bool TryGetEffectiveSkillPrice(string treeId, out int price)
@@ -974,10 +1012,14 @@ namespace RubiniteAP
             bool wasActive = ApRunActive;
 
             if (ApRunActive && DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
+            {
+                PersistChallengeSaveProfile();
                 ApRunActive = false;
+            }
 
             if (ApRunActive && sceneName == "TitleMenu")
             {
+                PersistChallengeSaveProfile();
                 ApRunActive = false;
                 _lastLoadedLevel = null;
                 _lastPortalLevel = null;
@@ -1240,6 +1282,7 @@ namespace RubiniteAP
                     // Continuation: preserve the challenge save from the previous session.
                     DataSaver.currentSaveNumber = GameData.ChallengeSaveNumber;
                     BackupChallengeSave();
+                    RestoreChallengeSaveProfile();
 
                     _flagsInitializedThisRun = true;
                     AddLog("Continuing existing AP run (challenge save preserved, dust kept).");
@@ -1300,9 +1343,17 @@ namespace RubiniteAP
             var versionFolder = DataSaver.path_versionFolder;
             var source = IOPath.Combine(versionFolder, DataSaver.CHALLENGE_SAVE_FOLDER);
             var backup = IOPath.Combine(versionFolder, "ChallengeSave_APBackup");
-            if (Directory.Exists(source) && !Directory.Exists(backup))
+            var missingMarker = IOPath.Combine(versionFolder, "ChallengeSave_APBackupMissing");
+            if (Directory.Exists(backup) || File.Exists(missingMarker))
+                return;
+
+            if (Directory.Exists(source))
             {
                 CopyDirectory(source, backup);
+            }
+            else
+            {
+                File.WriteAllText(missingMarker, "");
             }
         }
 
@@ -1311,22 +1362,94 @@ namespace RubiniteAP
             var versionFolder = DataSaver.path_versionFolder;
             var source = IOPath.Combine(versionFolder, "ChallengeSave_APBackup");
             var destination = IOPath.Combine(versionFolder, DataSaver.CHALLENGE_SAVE_FOLDER);
-            
-            if (Directory.Exists(source))
+            var missingMarker = IOPath.Combine(versionFolder, "ChallengeSave_APBackupMissing");
+
+            if (!Directory.Exists(source) && !File.Exists(missingMarker))
+                return;
+
+            try
             {
-                try
+                if (Directory.Exists(source))
                 {
-                    if (Directory.Exists(destination))
-                        Directory.Delete(destination, true);
-                    CopyDirectory(source, destination);
+                    ReplaceDirectorySnapshot(source, destination);
                     Directory.Delete(source, true);
-                    RubiniteAPPlugin.Instance?.Bridge?.AddLog("Vanilla Challenge Save restored.");
                 }
-                catch (Exception ex)
+                else if (Directory.Exists(destination))
                 {
-                    RubiniteAPPlugin.Instance?.Bridge?.AddLog("Failed to restore Challenge Save: " + ex.Message);
+                    Directory.Delete(destination, true);
                 }
+                if (File.Exists(missingMarker))
+                    File.Delete(missingMarker);
+                RubiniteAPPlugin.Instance?.Bridge?.AddLog("Vanilla Challenge Save restored.");
             }
+            catch (Exception ex)
+            {
+                RubiniteAPPlugin.Instance?.Bridge?.AddLog(
+                    "Failed to restore Vanilla Challenge Save: " + ex.Message);
+            }
+        }
+
+        public void PersistChallengeSaveProfile()
+        {
+            if (!ApRunActive) return;
+            try
+            {
+                var source = IOPath.Combine(
+                    DataSaver.path_versionFolder, DataSaver.CHALLENGE_SAVE_FOLDER);
+                if (!Directory.Exists(source)) return;
+
+                ReplaceDirectorySnapshot(source, State.ChallengeSavePath);
+            }
+            catch (Exception ex)
+            {
+                AddLog("Could not save this AP seed's Challenge save: " + ex.Message);
+            }
+        }
+
+        private void RestoreChallengeSaveProfile()
+        {
+            var source = State.ChallengeSavePath;
+            if (!Directory.Exists(source))
+            {
+                AddLog("No saved Challenge data for this AP profile; using the base Challenge save.");
+                return;
+            }
+
+            var destination = IOPath.Combine(
+                DataSaver.path_versionFolder, DataSaver.CHALLENGE_SAVE_FOLDER);
+            ReplaceDirectorySnapshot(source, destination);
+        }
+
+        private static void ReplaceDirectorySnapshot(string source, string destination)
+        {
+            var parent = IOPath.GetDirectoryName(destination);
+            if (!string.IsNullOrEmpty(parent))
+                Directory.CreateDirectory(parent);
+
+            var staging = destination + ".tmp";
+            var previous = destination + ".previous";
+            if (Directory.Exists(staging))
+                Directory.Delete(staging, true);
+            CopyDirectory(source, staging);
+
+            if (Directory.Exists(previous))
+                Directory.Delete(previous, true);
+            if (Directory.Exists(destination))
+                Directory.Move(destination, previous);
+
+            try
+            {
+                Directory.Move(staging, destination);
+            }
+            catch
+            {
+                if (!Directory.Exists(destination) && Directory.Exists(previous))
+                    Directory.Move(previous, destination);
+                throw;
+            }
+
+            if (Directory.Exists(previous))
+                Directory.Delete(previous, true);
         }
 
         private static void CopyDirectory(string source, string destination)
@@ -1915,6 +2038,8 @@ namespace RubiniteAP
                 : _enabledChecks;
 
             var ids = new List<long> { boss.LocationBase };
+            if (_bossClearLocationIds.TryGetValue(boss.Key, out var bossClearLocationId))
+                ids.Add(bossClearLocationId);
             if (noHit      && bossChecks.Contains("nohit"))      ids.Add(boss.LocationBase + 1);
             if (noTalisman && bossChecks.Contains("notalisman")) ids.Add(boss.LocationBase + 2);
             if (flawless   && bossChecks.Contains("flawless"))   ids.Add(boss.LocationBase + 3);
@@ -3710,15 +3835,9 @@ namespace RubiniteAP
                 }
                 return 0;
             }
-            else
-            {
-                string title = $"Slot {index + 1}";
-                foreach (var kv in _shopLocationIds)
-                {
-                    if (kv.Key.EndsWith(title)) return kv.Value;
-                }
-                return 0;
-            }
+            return _extraShopLocationIds.TryGetValue(index, out var locationId)
+                ? locationId
+                : 0;
         }
 
         public void HandleShopPurchaseById(long locId, string slotName)

@@ -10,7 +10,7 @@ namespace RubiniteAP
     public sealed class RubiniteAPPlugin : BaseUnityPlugin
     {
         public const string Guid = "rubinite.archipelago";
-        public const string Version = "0.1.0";
+        public const string Version = "0.3.0";
 
         public static RubiniteAPPlugin Instance { get; private set; }
         public static ManualLogSource Log => Instance != null ? Instance.Logger : null;

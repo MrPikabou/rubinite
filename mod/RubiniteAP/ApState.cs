@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 using BepInEx;
 using Newtonsoft.Json;
 using IOPath = System.IO.Path;
@@ -29,6 +31,11 @@ namespace RubiniteAP
         public string FilePath;
 
         private static string StateDirectory => IOPath.Combine(Paths.ConfigPath, "RubiniteAP");
+        private static string ProfilesDirectory => IOPath.Combine(StateDirectory, "Profiles");
+
+        public string ProfileId => GetProfileId(Slot, Seed);
+        public string ChallengeSavePath =>
+            IOPath.Combine(StateDirectory, "ChallengeSaves", ProfileId);
 
         public static ApState Load()
         {
@@ -59,13 +66,90 @@ namespace RubiniteAP
         {
             try
             {
-                Directory.CreateDirectory(StateDirectory);
-                File.WriteAllText(FilePath, JsonConvert.SerializeObject(this, Formatting.Indented));
+                SaveTo(FilePath);
             }
             catch (Exception ex)
             {
                 RubiniteAPPlugin.Log.LogWarning("Could not save AP state: " + ex.Message);
             }
+        }
+
+        public bool LoadProfile(string slot, string seed)
+        {
+            var profilePath = ProfilePath(slot, seed);
+            var clientUuid = Uuid;
+            try
+            {
+                if (!string.IsNullOrEmpty(Slot) && !string.IsNullOrEmpty(Seed))
+                    SaveTo(ProfilePath(Slot, Seed));
+
+                if (File.Exists(profilePath))
+                {
+                    var profile = JsonConvert.DeserializeObject<ApState>(File.ReadAllText(profilePath));
+                    if (profile == null)
+                        throw new InvalidDataException("Profile file contains no state.");
+                    CopyFrom(profile);
+                }
+                else
+                {
+                    FilePath = profilePath;
+                    ResetForSlot(slot, seed);
+                }
+
+                Slot = slot;
+                Seed = seed;
+                Uuid = clientUuid;
+                FilePath = profilePath;
+                SaveTo(FilePath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                RubiniteAPPlugin.Log.LogError(
+                    "Could not load AP profile for slot '" + slot + "' and seed '" + seed + "': " + ex);
+                return false;
+            }
+        }
+
+        public static string GetProfileId(string slot, string seed)
+        {
+            var profileKey = (slot ?? "").Trim() + "\n" + (seed ?? "").Trim();
+            using (var sha = SHA256.Create())
+            {
+                var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(profileKey));
+                var result = new StringBuilder(hash.Length * 2);
+                foreach (var value in hash)
+                    result.Append(value.ToString("x2"));
+                return result.ToString();
+            }
+        }
+
+        private static string ProfilePath(string slot, string seed)
+        {
+            return IOPath.Combine(ProfilesDirectory, GetProfileId(slot, seed) + ".json");
+        }
+
+        private void SaveTo(string path)
+        {
+            Directory.CreateDirectory(IOPath.GetDirectoryName(path));
+            File.WriteAllText(path, JsonConvert.SerializeObject(this, Formatting.Indented));
+        }
+
+        private void CopyFrom(ApState profile)
+        {
+            Slot = profile.Slot ?? "";
+            Seed = profile.Seed ?? "";
+            Uuid = profile.Uuid ?? "";
+            LastItemIndex = profile.LastItemIndex;
+            PendingDust = profile.PendingDust;
+            LastKnownDust = profile.LastKnownDust;
+            Items = profile.Items ?? new List<string>();
+            Checked = profile.Checked ?? new List<long>();
+            GoalSent = profile.GoalSent;
+            ChallengeSaveInitialized = profile.ChallengeSaveInitialized;
+            LastDarkRubyFightTime = profile.LastDarkRubyFightTime;
+            LastDarkRubyRankAchieved = profile.LastDarkRubyRankAchieved;
+            DeathsSinceLastSend = profile.DeathsSinceLastSend;
         }
 
         public bool HasItem(string name)
@@ -109,6 +193,8 @@ namespace RubiniteAP
             PendingDust = 0;
             LastKnownDust = 0;
             ChallengeSaveInitialized = false;
+            LastDarkRubyFightTime = 0;
+            LastDarkRubyRankAchieved = false;
             DeathsSinceLastSend = 0;
             Save();
         }

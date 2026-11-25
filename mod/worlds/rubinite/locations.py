@@ -19,6 +19,9 @@ def _build_locations() -> dict[str, int]:
             mapping[data.location_name(boss_name, suffix)] = (
                 data.LOCATION_BASE + boss_index * len(data.CHECK_TYPES) + check_index
             )
+        mapping[data.boss_clear_location_name(_key)] = (
+            data.BOSS_CLEAR_LOCATION_BASE + boss_index
+        )
             
     for shop_index in range(data.MAX_SHOP_SLOTS):
         if shop_index < len(data.TALISMANS):
@@ -44,9 +47,9 @@ class RubiniteLocation(Location):
 
 def create_all_locations(world: RubiniteWorld) -> None:
     enabled_checks = world.get_enabled_check_types()
-    for _key, boss_name, _level, _sigil in world.active_bosses:
+    for key, boss_name, _level, _sigil in world.active_bosses:
         boss_checks = enabled_checks
-        if _key in data.RANKLESS_BOSSES:
+        if key in data.RANKLESS_BOSSES:
             boss_checks = [c for c in enabled_checks if c[1] != "rank"]
 
         region = world.get_region(boss_name)
@@ -54,8 +57,17 @@ def create_all_locations(world: RubiniteWorld) -> None:
             name = data.location_name(boss_name, suffix)
             region.add_locations({name: LOCATION_NAME_TO_ID[name]}, RubiniteLocation)
 
+        clear_location_name = data.boss_clear_location_name(key)
+        region.add_locations(
+            {clear_location_name: LOCATION_NAME_TO_ID[clear_location_name]},
+            RubiniteLocation,
+        )
+        world.get_location(clear_location_name).place_locked_item(
+            world.create_item(data.boss_clear_item_name(key))
+        )
+
     shop_region = world.get_region("Wichiwi Shop")
-    for shop_index in range(data.MAX_SHOP_SLOTS):
+    for shop_index in range(world.max_shop_slots):
         if shop_index < len(data.TALISMANS):
             name = data.shop_location_name(data.TALISMANS[shop_index][0])
         else:
