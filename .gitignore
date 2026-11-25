@@ -4,6 +4,7 @@ obj/
 
 # Unity/Game files
 Rubinite_Data/*
+Rubinite_Assets/*
 MonoBleedingEdge/*
 BepInEx/*
 
