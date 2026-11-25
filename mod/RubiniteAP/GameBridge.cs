@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using Cinemachine;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using PugTool.Unity.Singleton;
 using PugTool.Unity.StringList;
@@ -17,6 +18,16 @@ namespace RubiniteAP
     public sealed class GameBridge
     {
         private const string ChallengeAreaScene = "ChallengeArea";
+
+        private sealed class VanillaSkinSnapshot
+        {
+            public string RubySkinId { get; set; }
+            public string CurrentSkinId { get; set; }
+            public bool HasCurrentSkinFlag { get; set; }
+        }
+
+        private static string VanillaSkinBackupPath =>
+            IOPath.Combine(BepInEx.Paths.ConfigPath, "RubiniteAP", "vanilla-skin-backup.json");
 
         public readonly ApState State;
         public readonly ApClient Client;
@@ -967,6 +978,9 @@ namespace RubiniteAP
         {
             FlushLogQueue();
 
+            if (!ApRunActive && !_startingRun)
+                RestoreVanillaSkinIfPending();
+
             if (ApRunActive && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
             {
                 if (GameSetting.Instance?.dustFlag != null)
@@ -1026,6 +1040,7 @@ namespace RubiniteAP
             if (wasActive && !ApRunActive)
             {
                 RestoreChallengeSave();
+                RestoreVanillaSkinIfPending();
             }
 
             // --- AP Shop Terminal Interaktion & Text-Sichtbarkeit ---
@@ -1259,6 +1274,12 @@ namespace RubiniteAP
 
             try
             {
+                if (!BackupVanillaSkin())
+                {
+                    _startingRun = false;
+                    return;
+                }
+
                 var isContinuation = State.ChallengeSaveInitialized;
 
                 if (!isContinuation)
@@ -1306,8 +1327,102 @@ namespace RubiniteAP
             catch (Exception ex)
             {
                 ApRunActive = false;
+                RestoreVanillaSkinIfPending();
                 _startingRun = false;
                 AddLog("Could not start the run: " + ex.Message);
+            }
+        }
+
+        private bool BackupVanillaSkin()
+        {
+            var path = VanillaSkinBackupPath;
+            if (File.Exists(path) && !RestoreVanillaSkinIfPending())
+                return false;
+
+            var gameSetting = GameSetting.Instance;
+            if (gameSetting?.rubySkinID == null)
+            {
+                AddLog("Cannot start AP run: Vanilla Ruby skin is not available to back up.");
+                return false;
+            }
+
+            var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
+            var currentSkinFlag = itemOverview?.currentSkinIDFlag;
+            var snapshot = new VanillaSkinSnapshot
+            {
+                RubySkinId = gameSetting.rubySkinID.GetValue(),
+                CurrentSkinId = currentSkinFlag?.GetValue(),
+                HasCurrentSkinFlag = currentSkinFlag != null
+            };
+            if (string.IsNullOrEmpty(snapshot.RubySkinId))
+            {
+                AddLog("Cannot start AP run: Vanilla Ruby skin ID is empty.");
+                return false;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(IOPath.GetDirectoryName(path));
+                File.WriteAllText(path, JsonConvert.SerializeObject(snapshot));
+                AddLog("Vanilla Ruby skin backed up for this AP run.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AddLog("Cannot start AP run: failed to back up Vanilla Ruby skin: " + ex.Message);
+                return false;
+            }
+        }
+
+        private bool RestoreVanillaSkinIfPending()
+        {
+            var path = VanillaSkinBackupPath;
+            if (!File.Exists(path))
+                return true;
+
+            try
+            {
+                var snapshot = JsonConvert.DeserializeObject<VanillaSkinSnapshot>(File.ReadAllText(path));
+                if (snapshot == null || string.IsNullOrEmpty(snapshot.RubySkinId))
+                    throw new InvalidDataException("Skin backup is missing its Ruby skin ID.");
+
+                var gameSetting = GameSetting.Instance;
+                if (gameSetting?.rubySkinID == null)
+                    return false;
+
+                var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
+                var currentSkinFlag = itemOverview?.currentSkinIDFlag;
+                if (snapshot.HasCurrentSkinFlag && currentSkinFlag == null)
+                    return false;
+
+                gameSetting.rubySkinID.SetValue(snapshot.RubySkinId, "RubiniteAP");
+                if (snapshot.HasCurrentSkinFlag)
+                    currentSkinFlag.SetValue(snapshot.CurrentSkinId, "RubiniteAP");
+
+                foreach (var skin in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
+                {
+                    if (skin == null) continue;
+                    try
+                    {
+                        skin.ChangeSkin();
+                    }
+                    catch (Exception ex)
+                    {
+                        AddLog("Could not refresh a Ruby skin renderer: " + ex.Message);
+                    }
+                }
+
+                File.Delete(path);
+                _playerColorKey = "default";
+                _darkRubyForceSkin = false;
+                _darkRubySkinApplied = false;
+                AddLog("Vanilla Ruby skin restored.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AddLog("Could not restore Vanilla Ruby skin: " + ex.Message);
+                return false;
             }
         }
 
