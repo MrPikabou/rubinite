@@ -20,6 +20,29 @@ namespace RubiniteAP
         }
     }
 
+    [HarmonyPatch(typeof(SkinFrame), "OnClick")]
+    internal static class VanillaSkinPreferenceClickPatch
+    {
+        private static void Postfix()
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || bridge.ApRunActive) return;
+            bridge.RecordVanillaSkinPreference();
+        }
+    }
+
+    [HarmonyPatch(typeof(ChangeSkinMenu), "Exit")]
+    internal static class VanillaSkinPreferenceMenuExitPatch
+    {
+        private static void Postfix()
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || bridge.ApRunActive) return;
+            bridge.RecordVanillaSkinPreference();
+            bridge.ApplyTitleScreenRedSkin();
+        }
+    }
+
     [HarmonyPatch(typeof(ChallengeLevelPoint), "Init")]
     internal static class ChallengeLevelPointInitPatch
     {
@@ -187,7 +210,18 @@ namespace RubiniteAP
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge != null && bridge.ApRunActive)
+            {
                 bridge.ApplyRuntime(true);
+                RubiniteAPPlugin.Instance.StartCoroutine(ApplyApSkinAfterInitialization(bridge));
+            }
+        }
+
+        private static IEnumerator ApplyApSkinAfterInitialization(GameBridge bridge)
+        {
+            yield return null;
+            yield return new WaitForSeconds(0.1f);
+            if (bridge != null && bridge.ApRunActive)
+                bridge.ApplyConfiguredApSkin();
         }
     }
 
@@ -336,6 +370,11 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(ChangeRubySkin), "ChangeSkin")]
     internal static class ChangeRubySkinPatch
     {
+        private static void Prefix(ChangeRubySkin __instance)
+        {
+            RubiniteAPPlugin.Instance?.Bridge?.ForceTitleScreenRedBeforeSkinChange(__instance);
+        }
+
         private static void Postfix(ChangeRubySkin __instance)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
@@ -383,11 +422,38 @@ namespace RubiniteAP
                 return;
             }
 
+            if (__instance.talismanData == null)
+                return;
+
+            var unlocked = bridge.IsShopTalismanUnlocked(__instance.talismanData.DisplayName);
+            ShopSlotVisibility.SetVisible(__instance, unlocked);
+            if (!unlocked) return;
+
             if (bridge.ApRunActive)
             {
                 bridge.HandleShopPurchase(__instance.talismanData.DisplayName);
                 __instance.talismanData.state.SetValue(AchievementState.Lock);
             }
+        }
+    }
+
+    internal static class ShopSlotVisibility
+    {
+        public static void SetVisible(CreateTalismanSelection selection, bool visible)
+        {
+            if (selection == null) return;
+
+            var grid = selection.GetComponentInParent<GridLayoutGroup>();
+            var root = GetGridRoot(selection, grid != null ? grid.transform : null);
+            root.gameObject.SetActive(visible);
+        }
+
+        public static Transform GetGridRoot(CreateTalismanSelection selection, Transform gridTransform)
+        {
+            var root = selection.transform;
+            while (gridTransform != null && root.parent != null && root.parent != gridTransform)
+                root = root.parent;
+            return root;
         }
     }
 
@@ -418,12 +484,8 @@ namespace RubiniteAP
             if (__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
             {
                 int index = int.Parse(__instance.gameObject.name.Replace("AP_ExtraSlot_", ""));
-                
-                foreach (var tmp in __instance.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
-                {
-                    if (tmp.gameObject.name == "Name_Text (TMP)") tmp.text = $"Slot {index + 1}";
-                    if (tmp.gameObject.name == "Cost (TMP)") tmp.text = "200";
-                }
+                var placeholderBridge = RubiniteAPPlugin.Instance?.Bridge;
+                CreateItemMenuEnterPatch.ConfigurePlaceholder(__instance, index, placeholderBridge);
                 if (__state >= 0 && __instance.talismanData != null)
                     CreateTalismanClickPricePatch.TrySetCostDust(__instance.talismanData, __state);
                 return;
@@ -432,7 +494,18 @@ namespace RubiniteAP
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
 
-            string displayName = __instance.talismanData.DisplayName;
+            var talismanData = __instance.talismanData;
+            if (talismanData == null) return;
+            string displayName = talismanData.DisplayName;
+
+            if (!bridge.IsShopTalismanUnlocked(displayName))
+            {
+                if (__state >= 0)
+                    CreateTalismanClickPricePatch.TrySetCostDust(talismanData, __state);
+                ShopSlotVisibility.SetVisible(__instance, false);
+                return;
+            }
+            ShopSlotVisibility.SetVisible(__instance, true);
 
             if (string.IsNullOrEmpty(displayName)
                 || displayName.Contains("Exhibition")
@@ -511,19 +584,44 @@ namespace RubiniteAP
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
 
-            string displayName = __instance.talismanData?.DisplayName;
-            if (string.IsNullOrEmpty(displayName)) return;
+            string title;
+            string description;
+            Sprite icon;
+            int notchCount;
+            var objectName = __instance.gameObject.name;
+            if (objectName.StartsWith("AP_ExtraSlot_")
+                && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var slotIndex))
+            {
+                if (bridge.TryGetScoutedShopItemForSlotIndex(slotIndex, out var slotTitle, out var slotItem))
+                {
+                    if (!bridge.TryGetShopDescription(slotTitle, slotItem,
+                        out title, out description, out icon, out notchCount))
+                        return;
+                }
+                else
+                {
+                    title = $"Shop Slot {slotIndex + 1}";
+                    description = "A replacement Archipelago shop slot. Purchase it to check this Wichiwi Shop location.";
+                    icon = bridge.PickIconForItem("Boss Defeated: Shop Slot");
+                    notchCount = 0;
+                }
+            }
+            else
+            {
+                string displayName = __instance.talismanData?.DisplayName;
+                if (string.IsNullOrEmpty(displayName)) return;
 
-            if (displayName.Contains("Exhibition")
-                || displayName.Contains("TalismanData_")
-                || displayName == "X19_Shield"
-                || displayName == "無"
-                || displayName.Contains("展場"))
-                return;
+                if (displayName.Contains("Exhibition")
+                    || displayName.Contains("TalismanData_")
+                    || displayName == "X19_Shield"
+                    || displayName == "無"
+                    || displayName.Contains("展場"))
+                    return;
 
-            if (!bridge.TryGetScoutedShopItem(displayName, out var apItemName)) return;
-            if (!bridge.TryGetShopDescription(displayName, apItemName,
-                out var title, out var description, out var icon, out var notchCount)) return;
+                if (!bridge.TryGetScoutedShopItem(displayName, out var apItemName)) return;
+                if (!bridge.TryGetShopDescription(displayName, apItemName,
+                    out title, out description, out icon, out notchCount)) return;
+            }
 
             var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
             if (menu == null) return;
@@ -617,9 +715,11 @@ namespace RubiniteAP
 
         internal static int GetEffectivePrice(CreateTalismanSelection selection, GameBridge bridge)
         {
-            return selection.gameObject.name.StartsWith("AP_ExtraSlot_")
-                ? 200
-                : bridge.GetEffectiveShopPrice(selection.talismanData);
+            var objectName = selection.gameObject.name;
+            if (objectName.StartsWith("AP_ExtraSlot_")
+                && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var slotIndex))
+                return bridge.GetEffectiveShopPriceForSlot(slotIndex);
+            return bridge.GetEffectiveShopPrice(selection.talismanData);
         }
 
         internal static bool TrySetCostDust(TalismanData td, int value)
@@ -1443,31 +1543,133 @@ namespace RubiniteAP
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
 
-            var grid = __instance.GetComponentInChildren<GridLayoutGroup>();
-            if (grid == null) return;
-
-            RubiniteAPPlugin.Instance.StartCoroutine(ConfigureShopSlotsNextFrame(grid, bridge));
+            RubiniteAPPlugin.Instance.StartCoroutine(ConfigureShopSlotsNextFrame(__instance, bridge));
         }
 
-        private static IEnumerator ConfigureShopSlotsNextFrame(GridLayoutGroup grid, GameBridge bridge)
+        private static IEnumerator ConfigureShopSlotsNextFrame(CreateItemMenu menu, GameBridge bridge)
         {
-            yield return null;
-            if (grid == null || bridge == null || !bridge.ApRunActive) yield break;
+            CreateTalismanSelection[] selections = null;
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                yield return null;
+                if (menu == null || bridge == null || !bridge.ApRunActive) yield break;
+                selections = menu.GetComponentsInChildren<CreateTalismanSelection>(true);
+                if (selections.Length > 0) break;
+            }
+
+            if (selections == null || selections.Length == 0)
+            {
+                bridge.AddLog("Shop UI filter found no CreateTalismanSelection entries under CreateItemMenu.");
+                yield break;
+            }
 
             int unlockedSlots = bridge.GetUnlockedShopSlotCount();
-            GameObject template = null;
-            for (int i = 0; i < grid.transform.childCount; i++)
+            int mappedEntries = 0;
+            int visibleEntries = 0;
+            int lockedEntries = 0;
+            int checkedEntries = 0;
+            var unmappedNames = new List<string>();
+
+            GridLayoutGroup grid = null;
+            int gridSelectionCount = -1;
+            foreach (var candidate in menu.GetComponentsInChildren<GridLayoutGroup>(true))
             {
-                var child = grid.transform.GetChild(i).gameObject;
-                if (!child.name.StartsWith("AP_ExtraSlot_")
-                    && child.GetComponent<CreateTalismanSelection>() != null)
-                    template = child;
+                int candidateCount = 0;
+                foreach (var selection in selections)
+                {
+                    if (selection != null && selection.transform.IsChildOf(candidate.transform))
+                        candidateCount++;
+                }
+                if (candidateCount > gridSelectionCount)
+                {
+                    grid = candidate;
+                    gridSelectionCount = candidateCount;
+                }
+            }
+
+            CreateTalismanSelection template = null;
+            if (grid != null)
+            {
+                foreach (var selection in selections)
+                {
+                    if (selection != null && !selection.gameObject.name.StartsWith("AP_ExtraSlot_")
+                        && selection.transform.IsChildOf(grid.transform))
+                    {
+                        template = selection;
+                        break;
+                    }
+                }
+            }
+
+            if (grid != null && template != null)
+            {
+                var representedSlots = new HashSet<int>();
+                foreach (var selection in selections)
+                {
+                    if (selection == null) continue;
+
+                    var objectName = selection.gameObject.name;
+                    if (objectName.StartsWith("AP_ExtraSlot_")
+                        && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var placeholderIndex))
+                    {
+                        representedSlots.Add(placeholderIndex);
+                    }
+                    else if (selection.talismanData != null
+                        && bridge.TryGetShopSlotIndex(selection.talismanData.DisplayName, out var slotIndex))
+                    {
+                        representedSlots.Add(slotIndex);
+                    }
+                }
+
+                bool templateWasActive = template.gameObject.activeSelf;
+                template.gameObject.SetActive(true);
+                for (int index = 0; index < bridge.ShopSlotCount; index++)
+                {
+                    if (representedSlots.Contains(index))
+                        continue;
+
+                    long locationId = bridge.GetShopLocationIdForIndex(index);
+                    if (locationId <= 0)
+                    {
+                        bridge.AddLog($"Could not create AP placeholder for shop slot {index + 1}: no location ID.");
+                        continue;
+                    }
+
+                    int insertionIndex = grid.transform.childCount;
+                    foreach (var existing in selections)
+                    {
+                        if (existing == null || existing.talismanData == null
+                            || !bridge.TryGetShopSlotIndex(existing.talismanData.DisplayName, out var existingIndex)
+                            || existingIndex <= index)
+                            continue;
+
+                        var existingRoot = ShopSlotVisibility.GetGridRoot(existing, grid.transform);
+                        insertionIndex = existingRoot.GetSiblingIndex();
+                        break;
+                    }
+
+                    var clone = UnityEngine.Object.Instantiate(template.gameObject, grid.transform);
+                    clone.name = "AP_ExtraSlot_" + index;
+                    clone.transform.SetSiblingIndex(insertionIndex);
+                    var placeholder = clone.GetComponent<CreateTalismanSelection>();
+                    if (placeholder == null)
+                    {
+                        UnityEngine.Object.Destroy(clone);
+                        bridge.AddLog($"Could not create AP placeholder for shop slot {index + 1}: template has no selection component.");
+                        continue;
+                    }
+
+                    clone.SetActive(true);
+                    ConfigurePlaceholder(placeholder, index, bridge);
+                    representedSlots.Add(index);
+                }
+                template.gameObject.SetActive(templateWasActive);
             }
 
             if (unlockedSlots > 30 && template != null)
             {
-                bool templateWasActive = template.activeSelf;
-                template.SetActive(true);
+                bool templateWasActive = template.gameObject.activeSelf;
+                template.gameObject.SetActive(true);
                 for (int i = 30; i < unlockedSlots; i++)
                 {
                     var slotName = "AP_ExtraSlot_" + i;
@@ -1484,33 +1686,132 @@ namespace RubiniteAP
 
                     if (clone == null)
                     {
-                        clone = UnityEngine.Object.Instantiate(template, grid.transform);
+                        clone = UnityEngine.Object.Instantiate(template.gameObject, grid.transform);
                         clone.name = slotName;
                     }
 
                     clone.SetActive(true);
-                    var label = clone.GetComponentInChildren<TMPro.TextMeshProUGUI>();
-                    if (label != null) label.text = $"Slot {i + 1}";
+                    var placeholder = clone.GetComponent<CreateTalismanSelection>();
+                    if (placeholder != null)
+                        ConfigurePlaceholder(placeholder, i, bridge);
                 }
-                template.SetActive(templateWasActive);
+                template.gameObject.SetActive(templateWasActive);
             }
 
-            for (int i = 0; i < grid.transform.childCount; i++)
+            selections = menu.GetComponentsInChildren<CreateTalismanSelection>(true);
+            foreach (var selection in selections)
             {
-                var child = grid.transform.GetChild(i).gameObject;
-                if (child.name.StartsWith("AP_ExtraSlot_"))
+                if (selection == null) continue;
+
+                if (selection.gameObject.name.StartsWith("AP_ExtraSlot_"))
                 {
-                    var indexText = child.name.Substring("AP_ExtraSlot_".Length);
+                    var indexText = selection.gameObject.name.Substring("AP_ExtraSlot_".Length);
                     if (int.TryParse(indexText, out var slotIndex))
-                        child.SetActive(slotIndex < unlockedSlots);
+                    {
+                        ConfigurePlaceholder(selection, slotIndex, bridge);
+                        var locationId = bridge.GetShopLocationIdForIndex(slotIndex);
+                        if (locationId > 0) mappedEntries++;
+                        if (locationId > 0 && bridge.State.HasChecked(locationId))
+                        {
+                            checkedEntries++;
+                            ShopSlotVisibility.SetVisible(selection, false);
+                        }
+                        else if (slotIndex < unlockedSlots)
+                        {
+                            visibleEntries++;
+                            ShopSlotVisibility.SetVisible(selection, true);
+                        }
+                        else
+                        {
+                            lockedEntries++;
+                            ShopSlotVisibility.SetVisible(selection, false);
+                        }
+                    }
                     continue;
                 }
 
-                var selection = child.GetComponent<CreateTalismanSelection>();
-                if (selection?.talismanData != null)
-                    child.SetActive(bridge.IsShopTalismanUnlocked(
-                        selection.talismanData.DisplayName));
+                if (selection.talismanData == null) continue;
+
+                var displayName = selection.talismanData.DisplayName;
+                if (bridge.TryGetShopSlotIndex(displayName, out _))
+                    mappedEntries++;
+                else if (unmappedNames.Count < 5)
+                    unmappedNames.Add(displayName);
+
+                if (bridge.IsShopTalismanUnlocked(displayName))
+                {
+                    visibleEntries++;
+                    ShopSlotVisibility.SetVisible(selection, true);
+                }
+                else
+                {
+                    lockedEntries++;
+                    ShopSlotVisibility.SetVisible(selection, false);
+                }
             }
+
+            var unmappedText = unmappedNames.Count == 0
+                ? ""
+                : $"; unmapped examples: {string.Join(", ", unmappedNames)}";
+            bridge.AddLog($"Shop UI filter: {visibleEntries} visible, {lockedEntries} locked, " +
+                $"{checkedEntries} checked hidden, {mappedEntries} mapped across " +
+                $"{visibleEntries + lockedEntries + checkedEntries} entries " +
+                $"(unlocked limit {unlockedSlots}){unmappedText}.");
+        }
+
+        internal static void ConfigurePlaceholder(
+            CreateTalismanSelection selection,
+            int slotIndex,
+            GameBridge bridge)
+        {
+            if (selection == null) return;
+
+            var displayName = $"Slot {slotIndex + 1}";
+            var icon = bridge?.FindSpriteByName("Pouch")
+                ?? bridge?.FindSpriteByName("Bag")
+                ?? bridge?.FindSpriteByName("ItemsIcon_21");
+            if (bridge != null
+                && bridge.TryGetScoutedShopItemForSlotIndex(slotIndex, out var slotTitle, out var slotItem))
+            {
+                if (!string.IsNullOrEmpty(slotItem))
+                    displayName = GetShopDisplayName(slotItem);
+                icon = bridge.PickIconForItem(
+                    slotItem,
+                    bridge.IsCrossGameShopItem(slotTitle)) ?? icon;
+            }
+
+            foreach (var tmp in selection.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
+            {
+                if (tmp.gameObject.name == "Name_Text (TMP)")
+                    tmp.text = displayName;
+                else if (tmp.gameObject.name == "Cost (TMP)")
+                    tmp.text = (bridge?.GetEffectiveShopPriceForSlot(slotIndex) ?? 200).ToString();
+            }
+
+            if (icon != null)
+            {
+                foreach (var image in selection.GetComponentsInChildren<UnityEngine.UI.Image>(true))
+                {
+                    if (image.gameObject.name != "Icon") continue;
+                    image.sprite = icon;
+                    break;
+                }
+            }
+        }
+
+        private static string GetShopDisplayName(string itemName)
+        {
+            if (itemName.StartsWith("Talisman: "))
+                return itemName.Substring("Talisman: ".Length);
+
+            if (itemName.StartsWith("Skill "))
+            {
+                var colonIndex = itemName.IndexOf(": ");
+                if (colonIndex > 0)
+                    return itemName.Substring(colonIndex + 2);
+            }
+
+            return itemName;
         }
     }
 }

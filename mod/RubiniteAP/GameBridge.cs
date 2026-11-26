@@ -24,10 +24,13 @@ namespace RubiniteAP
             public string RubySkinId { get; set; }
             public string CurrentSkinId { get; set; }
             public bool HasCurrentSkinFlag { get; set; }
+            public VanillaSkinSnapshot TitleScreenSnapshot { get; set; }
         }
 
         private static string VanillaSkinBackupPath =>
             IOPath.Combine(BepInEx.Paths.ConfigPath, "RubiniteAP", "vanilla-skin-backup.json");
+        private static string VanillaSkinPreferencePath =>
+            IOPath.Combine(BepInEx.Paths.ConfigPath, "RubiniteAP", "vanilla-skin-preference.json");
 
         public readonly ApState State;
         public readonly ApClient Client;
@@ -55,6 +58,7 @@ namespace RubiniteAP
         private readonly Dictionary<string, int> _shopSlotByTalismanId = new Dictionary<string, int>();
         private readonly Dictionary<string, long> _bossClearLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
+        private readonly HashSet<string> _loggedUnmappedShopNames = new HashSet<string>();
         private readonly List<int> _bossShopSlotUnlocks = new List<int>();
         private readonly Dictionary<string, int> _effectiveShopPrices = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _effectiveSkillPrices = new Dictionary<string, int>();
@@ -92,7 +96,8 @@ namespace RubiniteAP
         };
         private bool _darkRubyForceSkin;
         private bool _darkRubySkinApplied;
-        public bool IsDarkRubySkinEnabled => _playerColorKey == "darkruby" || _darkRubyForceSkin;
+        public bool IsDarkRubySkinEnabled => ApRunActive
+            && (_playerColorKey == "darkruby" || _darkRubyForceSkin);
         private SpriteRenderer _cachedGirlSr;
 
         private readonly Dictionary<string, Sprite> _customSpriteCache = new();
@@ -111,6 +116,7 @@ namespace RubiniteAP
         private int _mySlot;
         private bool _needsFullLock;
         private bool _startingRun;
+        private bool _inactiveSkinSnapshotApplied;
         private int _messageCount;
         private string _goalBossKey = "Witch2";
         public string GoalBossKey => _goalBossKey;
@@ -286,6 +292,7 @@ namespace RubiniteAP
             }
 
             _shopSlotByTalismanId.Clear();
+            _loggedUnmappedShopNames.Clear();
             if (info.SlotData?["shop_slot_order"] is JArray shopSlotOrder)
             {
                 for (var index = 0; index < shopSlotOrder.Count; index++)
@@ -436,6 +443,7 @@ namespace RubiniteAP
                 AddLog("Shop progression enabled: " + shopGroupsArr.Count + " groups.");
                 AddLog($"Progressive shop: {_shopProgressionEnabled}, starting groups: {_startingShopGroups}");
             }
+            AddLog($"Shop slot data: start={_baseShopSlots}, max={_maxShopSlots}, progressive={_shopProgressionEnabled}, boss unlocks=[{string.Join(", ", _bossShopSlotUnlocks)}].");
 
             _bossSceneMap.Clear();
             if (info.SlotData?["boss_scene_map"] is JObject sceneMap)
@@ -705,6 +713,14 @@ namespace RubiniteAP
 
         public bool TryGetScoutedShopItem(string talismanTitle, out string itemName)
             => _scoutedShopItems.TryGetValue(talismanTitle, out itemName);
+
+        public bool TryGetScoutedShopItemForSlotIndex(int slotIndex, out string talismanId, out string itemName)
+        {
+            talismanId = null;
+            itemName = null;
+            return TryGetShopTalismanIdForIndex(slotIndex, out talismanId)
+                && _scoutedShopItems.TryGetValue(talismanId, out itemName);
+        }
         
         public bool TryGetScoutedSkillTreeItem(string treeDisplayId, out string itemName)
         {
@@ -727,6 +743,28 @@ namespace RubiniteAP
                 return talismanData.costDust;
             }
             return talismanData.costDust == 0 ? 100 : talismanData.costDust;
+        }
+
+        public int GetEffectiveShopPriceForSlot(int slotIndex)
+        {
+            if (!TryGetShopTalismanIdForIndex(slotIndex, out var talismanId))
+                return 200;
+
+            if (_shopPriceMode == "randomized"
+                && _effectiveShopPrices.TryGetValue(talismanId, out var randomizedPrice))
+                return randomizedPrice;
+
+            var overview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+            if (overview != null)
+            {
+                foreach (var talisman in overview.GetAllData())
+                {
+                    if (talisman != null && talisman.DisplayName == talismanId)
+                        return talisman.costDust == 0 ? 100 : talisman.costDust;
+                }
+            }
+
+            return 200;
         }
 
         public bool TryGetEffectiveSkillPrice(string treeId, out int price)
@@ -843,9 +881,9 @@ namespace RubiniteAP
         private bool IsShopGroupUnlocked(string talismanDisplayName)
         {
             if (!_shopProgressionEnabled) return true;
-            if (!GameData.TalismanIds.TryGetValue(talismanDisplayName, out var talismanId)
+            if (!TryGetShopTalismanId(talismanDisplayName, out var talismanId)
                 || !_shopGroupByTalisman.TryGetValue(talismanId, out int groupIndex))
-                return true;
+                return false;
 
             int expansions = 0;
             foreach (var item in State.Items)
@@ -855,18 +893,51 @@ namespace RubiniteAP
             return groupIndex < (_startingShopGroups + expansions);
         }
 
+        public bool TryGetShopSlotIndex(string talismanDisplayName, out int slotIndex)
+        {
+            slotIndex = -1;
+            if (TryGetShopTalismanId(talismanDisplayName, out var talismanId)
+                && _shopSlotByTalismanId.TryGetValue(talismanId, out slotIndex))
+                return true;
+
+            var warningKey = talismanDisplayName ?? "<null>";
+            if (_loggedUnmappedShopNames.Add(warningKey))
+                AddLog($"Shop slot mapping missing for '{warningKey}'.");
+            return false;
+        }
+
+        private bool TryGetShopTalismanId(string talismanDisplayName, out string talismanId)
+        {
+            if (string.IsNullOrEmpty(talismanDisplayName))
+            {
+                talismanId = null;
+                return false;
+            }
+
+            if (_shopSlotByTalismanId.ContainsKey(talismanDisplayName))
+            {
+                talismanId = talismanDisplayName;
+                return true;
+            }
+
+            if (GameData.TalismanIds.TryGetValue(talismanDisplayName, out talismanId)
+                && _shopSlotByTalismanId.ContainsKey(talismanId))
+                return true;
+
+            talismanId = null;
+            return false;
+        }
+
         public bool IsShopTalismanUnlocked(string talismanDisplayName)
         {
-            if (!ApRunActive || string.IsNullOrEmpty(talismanDisplayName)
-                || !_shopLocationIds.ContainsKey(talismanDisplayName))
+            if (!ApRunActive || string.IsNullOrEmpty(talismanDisplayName))
                 return true;
 
             if (_shopProgressionEnabled)
                 return IsShopGroupUnlocked(talismanDisplayName);
 
-            if (!GameData.TalismanIds.TryGetValue(talismanDisplayName, out var talismanId)
-                || !_shopSlotByTalismanId.TryGetValue(talismanId, out var slotIndex))
-                return true;
+            if (!TryGetShopSlotIndex(talismanDisplayName, out var slotIndex))
+                return false;
 
             return slotIndex < GetUnlockedShopSlotCount();
         }
@@ -1024,8 +1095,8 @@ namespace RubiniteAP
         {
             FlushLogQueue();
 
-            if (!ApRunActive && !_startingRun)
-                RestoreVanillaSkinIfPending();
+            if (!ApRunActive && !_startingRun && !_inactiveSkinSnapshotApplied)
+                _inactiveSkinSnapshotApplied = RestoreVanillaSkinIfPending(false);
 
             if (ApRunActive && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
             {
@@ -1053,6 +1124,8 @@ namespace RubiniteAP
                 return;
 
             var sceneName = SceneManager.GetActiveScene().name;
+            if (!ApRunActive && sceneName == ChallengeAreaScene)
+                _inactiveSkinSnapshotApplied = RestoreVanillaSkinIfPending(true);
 
             if (sceneName != _lastCachedScene)
             {
@@ -1060,6 +1133,10 @@ namespace RubiniteAP
                 _cachedShopTerminal = null;
                 _cachedDarkRubyPodium = null;
                 _cachedGirlSr = null;
+                if (!ApRunActive && sceneName == "TitleMenu")
+                    RubiniteAPPlugin.Instance.StartCoroutine(ApplyTitleScreenRedAfterSceneLoad());
+                if (!ApRunActive && sceneName == ChallengeAreaScene)
+                    RubiniteAPPlugin.Instance.StartCoroutine(ApplyVanillaSkinPreferenceAfterSceneLoad());
             }
             
             if (ApRunActive && DeathLinkActive && sceneName != "TitleMenu")
@@ -1086,7 +1163,9 @@ namespace RubiniteAP
             if (wasActive && !ApRunActive)
             {
                 RestoreChallengeSave();
-                RestoreVanillaSkinIfPending();
+                _inactiveSkinSnapshotApplied = RestoreVanillaSkinIfPending(false);
+                if (sceneName == "TitleMenu")
+                    RubiniteAPPlugin.Instance.StartCoroutine(ApplyTitleScreenRedAfterSceneLoad());
             }
 
             // --- AP Shop Terminal Interaktion & Text-Sichtbarkeit ---
@@ -1373,7 +1452,7 @@ namespace RubiniteAP
             catch (Exception ex)
             {
                 ApRunActive = false;
-                RestoreVanillaSkinIfPending();
+                _inactiveSkinSnapshotApplied = RestoreVanillaSkinIfPending(false);
                 _startingRun = false;
                 AddLog("Could not start the run: " + ex.Message);
             }
@@ -1382,35 +1461,39 @@ namespace RubiniteAP
         private bool BackupVanillaSkin()
         {
             var path = VanillaSkinBackupPath;
-            if (File.Exists(path) && !RestoreVanillaSkinIfPending())
+            if (File.Exists(path) && !RestoreVanillaSkinIfPending(true))
                 return false;
 
-            var gameSetting = GameSetting.Instance;
-            if (gameSetting?.rubySkinID == null)
+            var titleScreenSnapshot = CaptureCurrentSkin();
+            if (titleScreenSnapshot == null)
             {
-                AddLog("Cannot start AP run: Vanilla Ruby skin is not available to back up.");
+                AddLog("Cannot start AP run: title-screen Ruby skin is not available to back up.");
                 return false;
             }
 
-            var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
-            var currentSkinFlag = itemOverview?.currentSkinIDFlag;
-            var snapshot = new VanillaSkinSnapshot
+            var snapshot = LoadVanillaSkinPreference();
+            if (snapshot == null)
             {
-                RubySkinId = gameSetting.rubySkinID.GetValue(),
-                CurrentSkinId = currentSkinFlag?.GetValue(),
-                HasCurrentSkinFlag = currentSkinFlag != null
-            };
+                snapshot = new VanillaSkinSnapshot
+                {
+                    RubySkinId = titleScreenSnapshot.RubySkinId,
+                    CurrentSkinId = titleScreenSnapshot.CurrentSkinId,
+                    HasCurrentSkinFlag = titleScreenSnapshot.HasCurrentSkinFlag
+                };
+            }
             if (string.IsNullOrEmpty(snapshot.RubySkinId))
             {
                 AddLog("Cannot start AP run: Vanilla Ruby skin ID is empty.");
                 return false;
             }
+            snapshot.TitleScreenSnapshot = titleScreenSnapshot;
 
             try
             {
                 Directory.CreateDirectory(IOPath.GetDirectoryName(path));
                 File.WriteAllText(path, JsonConvert.SerializeObject(snapshot));
-                AddLog("Vanilla Ruby skin backed up for this AP run.");
+                _inactiveSkinSnapshotApplied = false;
+                AddLog($"Ruby skins backed up for this AP run (Vanilla='{snapshot.RubySkinId}', title='{titleScreenSnapshot.RubySkinId}').");
                 return true;
             }
             catch (Exception ex)
@@ -1420,7 +1503,7 @@ namespace RubiniteAP
             }
         }
 
-        private bool RestoreVanillaSkinIfPending()
+        private bool RestoreVanillaSkinIfPending(bool deleteBackup)
         {
             var path = VanillaSkinBackupPath;
             if (!File.Exists(path))
@@ -1432,37 +1515,25 @@ namespace RubiniteAP
                 if (snapshot == null || string.IsNullOrEmpty(snapshot.RubySkinId))
                     throw new InvalidDataException("Skin backup is missing its Ruby skin ID.");
 
-                var gameSetting = GameSetting.Instance;
-                if (gameSetting?.rubySkinID == null)
+                bool isTitleScene = SceneManager.GetActiveScene().name == "TitleMenu";
+                var restoreSnapshot = isTitleScene
+                    ? snapshot.TitleScreenSnapshot
+                    : snapshot;
+                if (restoreSnapshot != null && !ApplySkinSnapshot(restoreSnapshot))
                     return false;
 
-                var itemOverview = SingletonScriptableObject<ItemDataOverview>.Instance;
-                var currentSkinFlag = itemOverview?.currentSkinIDFlag;
-                if (snapshot.HasCurrentSkinFlag && currentSkinFlag == null)
-                    return false;
-
-                gameSetting.rubySkinID.SetValue(snapshot.RubySkinId, "RubiniteAP");
-                if (snapshot.HasCurrentSkinFlag)
-                    currentSkinFlag.SetValue(snapshot.CurrentSkinId, "RubiniteAP");
-
-                foreach (var skin in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
-                {
-                    if (skin == null) continue;
-                    try
-                    {
-                        skin.ChangeSkin();
-                    }
-                    catch (Exception ex)
-                    {
-                        AddLog("Could not refresh a Ruby skin renderer: " + ex.Message);
-                    }
-                }
-
-                File.Delete(path);
-                _playerColorKey = "default";
+                if (deleteBackup)
+                    File.Delete(path);
                 _darkRubyForceSkin = false;
                 _darkRubySkinApplied = false;
-                AddLog("Vanilla Ruby skin restored.");
+                var restoreDescription = "Vanilla Ruby skin restored";
+                if (isTitleScene)
+                    restoreDescription = restoreSnapshot == null
+                        ? "Title screen Ruby skin left unchanged"
+                        : "Title screen Ruby skin restored";
+                AddLog(deleteBackup
+                    ? restoreDescription + "."
+                    : restoreDescription + "; keeping snapshot until the Vanilla Challenge Area loads.");
                 return true;
             }
             catch (Exception ex)
@@ -1470,6 +1541,201 @@ namespace RubiniteAP
                 AddLog("Could not restore Vanilla Ruby skin: " + ex.Message);
                 return false;
             }
+        }
+
+        private VanillaSkinSnapshot CaptureCurrentSkin()
+        {
+            var gameSetting = GameSetting.Instance;
+            if (gameSetting?.rubySkinID == null)
+                return null;
+
+            var currentSkinFlag = SingletonScriptableObject<ItemDataOverview>.Instance?.currentSkinIDFlag;
+            var currentSkinId = currentSkinFlag?.GetValue();
+            var rubySkinId = !string.IsNullOrEmpty(currentSkinId)
+                ? currentSkinId
+                : gameSetting.rubySkinID.GetValue();
+            if (string.IsNullOrEmpty(rubySkinId))
+                return null;
+
+            return new VanillaSkinSnapshot
+            {
+                RubySkinId = rubySkinId,
+                CurrentSkinId = string.IsNullOrEmpty(currentSkinId) ? rubySkinId : currentSkinId,
+                HasCurrentSkinFlag = currentSkinFlag != null
+            };
+        }
+
+        private VanillaSkinSnapshot LoadVanillaSkinPreference()
+        {
+            var path = VanillaSkinPreferencePath;
+            if (!File.Exists(path))
+                return null;
+
+            try
+            {
+                var snapshot = JsonConvert.DeserializeObject<VanillaSkinSnapshot>(File.ReadAllText(path));
+                if (snapshot == null || string.IsNullOrEmpty(snapshot.RubySkinId))
+                    throw new InvalidDataException("Vanilla skin preference is missing its Ruby skin ID.");
+                return snapshot;
+            }
+            catch (Exception ex)
+            {
+                AddLog("Could not load Vanilla Ruby skin preference: " + ex.Message);
+                return null;
+            }
+        }
+
+        public void RecordVanillaSkinPreference()
+        {
+            if (ApRunActive)
+                return;
+
+            var snapshot = CaptureCurrentSkin();
+            if (snapshot == null)
+            {
+                AddLog("Could not save Vanilla Ruby skin preference: current skin is unavailable.");
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(IOPath.GetDirectoryName(VanillaSkinPreferencePath));
+                File.WriteAllText(VanillaSkinPreferencePath, JsonConvert.SerializeObject(snapshot));
+                AddLog($"Vanilla Ruby skin preference saved: '{snapshot.RubySkinId}'.");
+            }
+            catch (Exception ex)
+            {
+                AddLog("Could not save Vanilla Ruby skin preference: " + ex.Message);
+            }
+        }
+
+        private IEnumerator ApplyVanillaSkinPreferenceAfterSceneLoad()
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                yield return new WaitForSeconds(0.1f);
+                if (ApRunActive || SceneManager.GetActiveScene().name != ChallengeAreaScene)
+                    yield break;
+
+                var snapshot = LoadVanillaSkinPreference();
+                if (snapshot == null)
+                    yield break;
+                if (ApplySkinSnapshot(snapshot))
+                {
+                    AddLog($"Vanilla Ruby skin preference applied: '{snapshot.RubySkinId}'.");
+                    yield break;
+                }
+            }
+
+            AddLog("Could not apply Vanilla Ruby skin preference after loading the Challenge Area.");
+        }
+
+        private IEnumerator ApplyTitleScreenRedAfterSceneLoad()
+        {
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                yield return new WaitForSeconds(0.1f);
+                if (ApRunActive || SceneManager.GetActiveScene().name != "TitleMenu")
+                    yield break;
+                if (TryApplyTitleScreenRedSkin())
+                    yield break;
+            }
+
+            AddLog("Could not apply the red Ruby skin after loading the title screen.");
+        }
+
+        public void ApplyTitleScreenRedSkin()
+        {
+            if (ApRunActive || SceneManager.GetActiveScene().name != "TitleMenu")
+                return;
+            if (!TryApplyTitleScreenRedSkin())
+                RubiniteAPPlugin.Instance.StartCoroutine(ApplyTitleScreenRedAfterSceneLoad());
+        }
+
+        public void ForceTitleScreenRedBeforeSkinChange(ChangeRubySkin skin)
+        {
+            if (ApRunActive
+                || SceneManager.GetActiveScene().name != "TitleMenu"
+                || skin?.spriteRenderer == null
+                || skin.isPortrait
+                || skin.spriteRenderer.gameObject.name != "Girl")
+                return;
+
+            SetTitleScreenRedSkinIds();
+        }
+
+        private bool TryApplyTitleScreenRedSkin()
+        {
+            if (!SetTitleScreenRedSkinIds())
+                return false;
+
+            bool foundTitleRuby = false;
+            foreach (var skin in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
+            {
+                if (skin?.spriteRenderer == null
+                    || skin.isPortrait
+                    || skin.spriteRenderer.gameObject.name != "Girl"
+                    || skin.spriteRenderer.gameObject.scene.name != "TitleMenu")
+                    continue;
+
+                skin.ChangeSkin();
+                foundTitleRuby = true;
+            }
+
+            if (!foundTitleRuby)
+                return false;
+
+            AddLog("Title screen Ruby skin set to red.");
+            return true;
+        }
+
+        private bool SetTitleScreenRedSkinIds()
+        {
+            var gameSetting = GameSetting.Instance;
+            if (gameSetting?.rubySkinID == null)
+                return false;
+
+            var skinId = GetSkinIdForColor("red");
+            if (string.IsNullOrEmpty(skinId))
+            {
+                AddLog("Title screen Ruby skin: no GUID for 'red'.");
+                return false;
+            }
+
+            gameSetting.rubySkinID.SetValue(skinId, "RubiniteAP Title Screen");
+            SingletonScriptableObject<ItemDataOverview>.Instance?.currentSkinIDFlag
+                ?.SetValue(skinId, "RubiniteAP Title Screen");
+            return true;
+        }
+
+        private bool ApplySkinSnapshot(VanillaSkinSnapshot snapshot)
+        {
+            var gameSetting = GameSetting.Instance;
+            if (gameSetting?.rubySkinID == null)
+                return false;
+
+            var currentSkinFlag = SingletonScriptableObject<ItemDataOverview>.Instance?.currentSkinIDFlag;
+            if (snapshot.HasCurrentSkinFlag && currentSkinFlag == null)
+                return false;
+
+            gameSetting.rubySkinID.SetValue(snapshot.RubySkinId, "RubiniteAP");
+            if (snapshot.HasCurrentSkinFlag)
+                currentSkinFlag.SetValue(snapshot.CurrentSkinId, "RubiniteAP");
+
+            foreach (var skin in Resources.FindObjectsOfTypeAll<ChangeRubySkin>())
+            {
+                if (skin == null) continue;
+                try
+                {
+                    skin.ChangeSkin();
+                }
+                catch (Exception ex)
+                {
+                    AddLog("Could not refresh a Ruby skin renderer: " + ex.Message);
+                }
+            }
+
+            return true;
         }
 
         private IEnumerator WaitForChallengeArea()
@@ -1481,6 +1747,7 @@ namespace RubiniteAP
                     _startingRun = false;
                     yield return new WaitForSeconds(0.4f);
                     ApplyRuntime(true);
+                    ApplyConfiguredApSkin();
                     ApplyDarkRubyGradingToLevelData();
                     SpawnShopObject();
                     try { SpawnDarkRubyPodium(); }
@@ -3065,6 +3332,16 @@ namespace RubiniteAP
                     if (skin != null) skin.ChangeSkin();
                 }
             }
+
+        }
+
+        public void ApplyConfiguredApSkin()
+        {
+            if (!ApRunActive
+                || SceneManager.GetActiveScene().name == "TitleMenu"
+                || string.IsNullOrEmpty(_playerColorKey))
+                return;
+            ApplySkinForColor(_playerColorKey);
         }
 
         public Sprite PickIconForItem(string itemName, bool isCrossGame = false)
@@ -3100,6 +3377,11 @@ namespace RubiniteAP
                     }
                 }
                 return LoadCustomSprite("ap_icon_talisman.png", 0.5f);
+            }
+
+            if (itemName.StartsWith("Boss Defeated:"))
+            {
+                return FindSpriteByName("ItemsIcon_2");
             }
 
             // --- Skills: SkillData.Icon (no atlas dependency) ---
@@ -3987,19 +4269,40 @@ namespace RubiniteAP
             return Mathf.Min(unlocked, _maxShopSlots);
         }
 
+        public int ShopSlotCount => _shopSlotByTalismanId.Count;
+
+        private bool TryGetShopTalismanIdForIndex(int index, out string talismanId)
+        {
+            foreach (var entry in _shopSlotByTalismanId)
+            {
+                if (entry.Value == index)
+                {
+                    talismanId = entry.Key;
+                    return true;
+                }
+            }
+
+            talismanId = null;
+            return false;
+        }
+
         public long GetShopLocationIdForIndex(int index)
         {
-            if (index < 30)
+            if (index >= 0 && index < 30)
             {
-                if (_shopLocationIds.Count > 0)
+                if (TryGetShopTalismanIdForIndex(index, out var talismanId)
+                    && _shopLocationIds.TryGetValue(talismanId, out var locationId))
+                    return locationId;
+
+                if (_shopSlotByTalismanId.Count == 0 && _shopLocationIds.Count > 0)
                 {
                     var keys = new List<string>(_shopLocationIds.Keys);
                     if (index < keys.Count) return _shopLocationIds[keys[index]];
                 }
                 return 0;
             }
-            return _extraShopLocationIds.TryGetValue(index, out var locationId)
-                ? locationId
+            return _extraShopLocationIds.TryGetValue(index, out var extraLocationId)
+                ? extraLocationId
                 : 0;
         }
 
@@ -4023,9 +4326,16 @@ namespace RubiniteAP
             var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
             if (menu != null)
             {
+                string placeholderObjectName = null;
+                if (slotName.StartsWith("Slot ", StringComparison.Ordinal)
+                    && int.TryParse(slotName.Substring("Slot ".Length), out var slotNumber)
+                    && slotNumber > 0)
+                    placeholderObjectName = "AP_ExtraSlot_" + (slotNumber - 1);
+
                 foreach (var sel in menu.GetComponentsInChildren<CreateTalismanSelection>())
                 {
-                    if (sel.gameObject.name.Contains(slotName))
+                    if (sel.gameObject.name == placeholderObjectName
+                        || sel.gameObject.name.Contains(slotName))
                     {
                         sel.gameObject.SetActive(false);
                     }
