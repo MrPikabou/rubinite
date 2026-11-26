@@ -98,7 +98,11 @@ class RubiniteWorld(World):
             },
             "shop_groups": self._shop_groups,
             "base_shop_slots": self.options.base_shop_slots.value,
-            "slots_per_boss_kill": self.options.slots_per_boss_kill.value,
+            "starting_shop_slots": self.options.base_shop_slots.value,
+            "total_shop_slots": self.options.total_shop_slots.value,
+            "max_shop_slots": self.max_shop_slots,
+            "shop_slot_order": [talisman_id for _title, talisman_id in data.TALISMANS],
+            "boss_shop_slot_unlocks": self._boss_shop_slot_unlocks,
             "slots_per_shop_expansion": self.options.slots_per_shop_expansion.value,
             "progressive_shop": self.options.progressive_shop.value,
             "starting_shop_groups": self.options.starting_shop_groups.value,
@@ -156,6 +160,7 @@ class RubiniteWorld(World):
         self._shop_prices = self._compute_shop_prices()
         self._skill_prices = self._compute_skill_prices()
         self.max_shop_slots = self._compute_max_shop_slots()
+        self._boss_shop_slot_unlocks = self._compute_boss_shop_slot_unlocks()
         self._validate_item_location_balance()
 
     def _validate_item_location_balance(self) -> None:
@@ -196,18 +201,51 @@ class RubiniteWorld(World):
         ]
 
     def _compute_max_shop_slots(self) -> int:
-        starting_slots = max(len(data.TALISMANS), self.options.base_shop_slots.value)
+        total_slots = self.options.total_shop_slots.value
         if self.options.progressive_shop.value:
             expansions = max(
                 0, data.SHOP_GROUPS - self.options.starting_shop_groups.value
             )
             extra_slots = expansions * self.options.slots_per_shop_expansion.value
-        else:
-            available_boss_clears = max(0, len(self.active_bosses) - 1)
-            extra_slots = (
-                available_boss_clears * self.options.slots_per_boss_kill.value
+            return min(data.MAX_SHOP_SLOTS, total_slots, len(data.TALISMANS) + extra_slots)
+        return min(data.MAX_SHOP_SLOTS, total_slots)
+
+    def _compute_boss_shop_slot_unlocks(self) -> list[int]:
+        if self.options.progressive_shop.value:
+            return []
+
+        starting_slots = self.options.base_shop_slots.value
+        if starting_slots > self.options.total_shop_slots.value:
+            raise OptionError(
+                f"Starting Shop Slots ({starting_slots}) cannot exceed "
+                f"Total Shop Slots ({self.options.total_shop_slots.value})."
             )
-        return min(data.MAX_SHOP_SLOTS, starting_slots + extra_slots)
+
+        boss_kills = sum(
+            1 for key, _name, _level, _sigil in self.active_bosses
+            if key != self.get_goal_boss_key()
+        )
+        remaining_slots = max(0, self.max_shop_slots - starting_slots)
+        if boss_kills == 0:
+            return []
+
+        slots_per_boss, extra_slots = divmod(remaining_slots, boss_kills)
+        return [
+            slots_per_boss + (1 if index < extra_slots else 0)
+            for index in range(boss_kills)
+        ]
+
+    def shop_boss_kills_required_for_slot(self, slot_number: int) -> int:
+        if slot_number <= self.options.base_shop_slots.value:
+            return 0
+
+        unlocked_slots = self.options.base_shop_slots.value
+        for boss_kills, slots in enumerate(self._boss_shop_slot_unlocks, start=1):
+            unlocked_slots += slots
+            if slot_number <= unlocked_slots:
+                return boss_kills
+
+        return len(self._boss_shop_slot_unlocks) + 1
     
     def _compute_shop_prices(self) -> dict[str, int]:
         if self.options.shop_price_mode.value != self.options.shop_price_mode.option_randomized:

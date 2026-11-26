@@ -1443,37 +1443,73 @@ namespace RubiniteAP
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
 
-            int targetSlots = bridge.GetUnlockedShopSlotCount();
-            if (targetSlots <= 30) return;
-
             var grid = __instance.GetComponentInChildren<GridLayoutGroup>();
             if (grid == null) return;
 
-            RubiniteAPPlugin.Instance.StartCoroutine(ExpandShopSlotsNextFrame(grid, targetSlots));
+            RubiniteAPPlugin.Instance.StartCoroutine(ConfigureShopSlotsNextFrame(grid, bridge));
         }
 
-        private static IEnumerator ExpandShopSlotsNextFrame(GridLayoutGroup grid, int targetSlots)
+        private static IEnumerator ConfigureShopSlotsNextFrame(GridLayoutGroup grid, GameBridge bridge)
         {
             yield return null;
+            if (grid == null || bridge == null || !bridge.ApRunActive) yield break;
 
-            int currentSlots = grid.transform.childCount;
-            if (currentSlots == 0) yield break;
-
-            var template = grid.transform.GetChild(currentSlots - 1).gameObject;
-
-            for (int i = currentSlots; i < targetSlots; i++)
+            int unlockedSlots = bridge.GetUnlockedShopSlotCount();
+            GameObject template = null;
+            for (int i = 0; i < grid.transform.childCount; i++)
             {
-                var clone = UnityEngine.Object.Instantiate(template, grid.transform);
-                clone.name = "AP_ExtraSlot_" + i;
+                var child = grid.transform.GetChild(i).gameObject;
+                if (!child.name.StartsWith("AP_ExtraSlot_")
+                    && child.GetComponent<CreateTalismanSelection>() != null)
+                    template = child;
+            }
 
-                var original = clone.GetComponent<CreateTalismanSelection>();
-                if (original != null)
+            if (unlockedSlots > 30 && template != null)
+            {
+                bool templateWasActive = template.activeSelf;
+                template.SetActive(true);
+                for (int i = 30; i < unlockedSlots; i++)
                 {
-                    clone.name = "AP_ExtraSlot_" + i;
-                    
+                    var slotName = "AP_ExtraSlot_" + i;
+                    GameObject clone = null;
+                    for (int childIndex = 0; childIndex < grid.transform.childCount; childIndex++)
+                    {
+                        var child = grid.transform.GetChild(childIndex);
+                        if (child.name == slotName)
+                        {
+                            clone = child.gameObject;
+                            break;
+                        }
+                    }
+
+                    if (clone == null)
+                    {
+                        clone = UnityEngine.Object.Instantiate(template, grid.transform);
+                        clone.name = slotName;
+                    }
+
+                    clone.SetActive(true);
                     var label = clone.GetComponentInChildren<TMPro.TextMeshProUGUI>();
                     if (label != null) label.text = $"Slot {i + 1}";
                 }
+                template.SetActive(templateWasActive);
+            }
+
+            for (int i = 0; i < grid.transform.childCount; i++)
+            {
+                var child = grid.transform.GetChild(i).gameObject;
+                if (child.name.StartsWith("AP_ExtraSlot_"))
+                {
+                    var indexText = child.name.Substring("AP_ExtraSlot_".Length);
+                    if (int.TryParse(indexText, out var slotIndex))
+                        child.SetActive(slotIndex < unlockedSlots);
+                    continue;
+                }
+
+                var selection = child.GetComponent<CreateTalismanSelection>();
+                if (selection?.talismanData != null)
+                    child.SetActive(bridge.IsShopTalismanUnlocked(
+                        selection.talismanData.DisplayName));
             }
         }
     }

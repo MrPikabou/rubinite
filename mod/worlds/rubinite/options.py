@@ -123,17 +123,18 @@ class ProgressiveShop(Toggle):
 
 class BaseShopSlots(Range):
     """Number of shop slots available from the start."""
-    display_name = "Base Shop Slots"
-    range_start = 30
-    range_end = 45
-    default = 30
+    display_name = "Starting Shop Slots"
+    range_start = 1
+    range_end = len(data.TALISMANS)
+    default = 8
 
-class SlotsPerBossKill(Range):
-    """How many extra shop slots unlock per unique boss kill (only if Progressive Shop is off)."""
-    display_name = "Slots per Boss Kill"
-    range_start = 0
-    range_end = 5
-    default = 0
+
+class TotalShopSlots(Range):
+    """Maximum number of shop slots in this seed, including extra AP slots."""
+    display_name = "Total Shop Slots"
+    range_start = len(data.TALISMANS)
+    range_end = data.MAX_SHOP_SLOTS
+    default = len(data.TALISMANS)
 
 class SlotsPerShopExpansion(Range):
     """How many extra shop slots unlock per Shop Expansion (only if Progressive Shop is on)."""
@@ -245,9 +246,9 @@ class RubiniteOptions(PerGameCommonOptions):
     enable_rank_clear: EnableRankClear
     required_rank: RequiredRank
     base_shop_slots: BaseShopSlots
+    total_shop_slots: TotalShopSlots
     progressive_shop: ProgressiveShop
     starting_shop_groups: StartingShopGroups
-    slots_per_boss_kill : SlotsPerBossKill
     slots_per_shop_expansion: SlotsPerShopExpansion
     shop_price_mode: ShopPriceMode
     shop_price_min: ShopPriceMin
@@ -283,9 +284,9 @@ class RubiniteWebWorld(WebWorld):
         ]),
         OptionGroup("Shop & Skill Prices", [
             BaseShopSlots,
+            TotalShopSlots,
             ProgressiveShop,
             StartingShopGroups,
-            SlotsPerBossKill,
             SlotsPerShopExpansion,
             ShopPriceMode,
             ShopPriceMin,

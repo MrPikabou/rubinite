@@ -41,11 +41,6 @@ def set_all_rules(world: RubiniteWorld) -> None:
                 location.item_rule = _not_progression
 
     has_boss_clear = lambda state: _has_boss_clear(state, world)
-    if not world.options.progressive_shop.value:
-        for title, _talisman_id in data.TALISMANS:
-            location = world.get_location(data.shop_location_name(title))
-            location.access_rule = has_boss_clear
-
     if world.options.progressive_shop.value:
         id_to_title = {tid: t for t, tid in data.TALISMANS}
         for group_index, group in enumerate(world._shop_groups):
@@ -62,14 +57,24 @@ def set_all_rules(world: RubiniteWorld) -> None:
                     )
                 )
 
-    for shop_index in range(len(data.TALISMANS), world.max_shop_slots):
-        location = world.get_location(f"Wichiwi Shop: Slot {shop_index + 1}")
+    for shop_index in range(world.max_shop_slots):
+        if shop_index < len(data.TALISMANS):
+            location_name = data.shop_location_name(data.TALISMANS[shop_index][0])
+        else:
+            location_name = f"Wichiwi Shop: Slot {shop_index + 1}"
+        location = world.get_location(location_name)
         shop_number = shop_index + 1
-        base_slots = world.options.base_shop_slots.value
 
-        if world.options.progressive_shop.value:
+        if not world.options.progressive_shop.value:
+            required_boss_kills = world.shop_boss_kills_required_for_slot(shop_number)
+            if required_boss_kills > 0:
+                location.access_rule = (
+                    lambda state, c=required_boss_kills:
+                        _boss_clear_count(state, world) >= c
+                )
+        elif shop_index >= len(data.TALISMANS):
             slots_per_expansion = world.options.slots_per_shop_expansion.value
-            slots_above_base = max(0, shop_number - base_slots)
+            slots_above_base = shop_number - len(data.TALISMANS)
             required_expansions = (
                 (slots_above_base + slots_per_expansion - 1) // slots_per_expansion
                 if slots_per_expansion > 0
@@ -79,20 +84,6 @@ def set_all_rules(world: RubiniteWorld) -> None:
                 lambda state, c=required_expansions: (
                     c == 0
                     or state.has(data.SHOP_EXPANSION_ITEM, world.player, c)
-                )
-            )
-        else:
-            slots_per_boss = world.options.slots_per_boss_kill.value
-            slots_above_base = max(0, shop_number - base_slots)
-            required_boss_clears = (
-                (slots_above_base + slots_per_boss - 1) // slots_per_boss
-                if slots_per_boss > 0
-                else 0
-            )
-            location.access_rule = (
-                lambda state, c=required_boss_clears: (
-                    has_boss_clear(state)
-                    and _boss_clear_count(state, world) >= c
                 )
             )
 

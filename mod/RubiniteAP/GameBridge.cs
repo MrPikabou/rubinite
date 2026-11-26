@@ -52,8 +52,10 @@ namespace RubiniteAP
 
         private readonly Dictionary<string, long> _shopLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<int, long> _extraShopLocationIds = new Dictionary<int, long>();
+        private readonly Dictionary<string, int> _shopSlotByTalismanId = new Dictionary<string, int>();
         private readonly Dictionary<string, long> _bossClearLocationIds = new Dictionary<string, long>();
         private readonly Dictionary<string, int> _shopGroupByTalisman = new Dictionary<string, int>();
+        private readonly List<int> _bossShopSlotUnlocks = new List<int>();
         private readonly Dictionary<string, int> _effectiveShopPrices = new Dictionary<string, int>();
         private readonly Dictionary<string, int> _effectiveSkillPrices = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _scoutedShopItems = new Dictionary<string, string>();
@@ -125,8 +127,10 @@ namespace RubiniteAP
         private int _requiredRankIndex = 0;
 
         private int _baseShopSlots = 30;
+        private int _maxShopSlots = 30;
         private int _slotsPerBossKill = 0;
         private int _slotsPerShopExpansion = 0;
+        private bool _hasBossShopSlotSchedule;
         private string _shopPriceMode = "vanilla";
         private bool _shopProgressionEnabled;
         private int _startingShopGroups;
@@ -281,6 +285,17 @@ namespace RubiniteAP
                 AddLog("Shop locations loaded (" + _shopLocationIds.Count + " entries).");
             }
 
+            _shopSlotByTalismanId.Clear();
+            if (info.SlotData?["shop_slot_order"] is JArray shopSlotOrder)
+            {
+                for (var index = 0; index < shopSlotOrder.Count; index++)
+                {
+                    var talismanId = shopSlotOrder[index]?.ToString();
+                    if (!string.IsNullOrEmpty(talismanId))
+                        _shopSlotByTalismanId[talismanId] = index;
+                }
+            }
+
             _extraShopLocationIds.Clear();
             if (info.SlotData?["extra_shop_locations"] is JObject extraShopLocations)
             {
@@ -292,6 +307,8 @@ namespace RubiniteAP
                 }
                 AddLog("Extra shop locations loaded (" + _extraShopLocationIds.Count + " entries).");
             }
+            _maxShopSlots = info.SlotData?["max_shop_slots"]?.Value<int>()
+                ?? Mathf.Max(30, 30 + _extraShopLocationIds.Count);
 
             if (_shopLocationIds.Count > 0)
             {
@@ -367,9 +384,18 @@ namespace RubiniteAP
             }
 
             _startingShopGroups = info.SlotData?["starting_shop_groups"]?.Value<int>() ?? 0;
-            _baseShopSlots = info.SlotData?["base_shop_slots"]?.Value<int>() ?? 30;
+            _baseShopSlots = info.SlotData?["starting_shop_slots"]?.Value<int>()
+                ?? info.SlotData?["base_shop_slots"]?.Value<int>() ?? 30;
             _slotsPerBossKill = info.SlotData?["slots_per_boss_kill"]?.Value<int>() ?? 0;
             _slotsPerShopExpansion = info.SlotData?["slots_per_shop_expansion"]?.Value<int>() ?? 0;
+            _bossShopSlotUnlocks.Clear();
+            var bossShopSlots = info.SlotData?["boss_shop_slot_unlocks"] as JArray;
+            _hasBossShopSlotSchedule = bossShopSlots != null;
+            if (bossShopSlots != null)
+            {
+                foreach (var slotCount in bossShopSlots)
+                    _bossShopSlotUnlocks.Add(slotCount.Value<int>());
+            }
 
             _fillerDustValues.Clear();
             _fillerIconNames.Clear();
@@ -595,17 +621,20 @@ namespace RubiniteAP
         private int CountDistinctBossKills()
         {
             int count = 0;
+            var mappedBosses = new HashSet<string>();
+            foreach (var boss in _bossClearLocationIds)
+            {
+                mappedBosses.Add(boss.Key);
+                if (boss.Key != _goalBossKey && State.HasChecked(boss.Value))
+                    count++;
+            }
+
             foreach (var boss in GameData.Bosses)
             {
-                if (boss.Key == _goalBossKey) continue;
-                if (_bossClearLocationIds.TryGetValue(boss.Key, out var clearLocationId))
-                {
-                    if (State.HasChecked(clearLocationId)) count++;
-                }
-                else if (State.HasChecked(boss.LocationBase))
-                {
+                if (boss.Key == _goalBossKey || mappedBosses.Contains(boss.Key))
+                    continue;
+                if (State.HasChecked(boss.LocationBase))
                     count++;
-                }
             }
             return count;
         }
@@ -814,7 +843,8 @@ namespace RubiniteAP
         private bool IsShopGroupUnlocked(string talismanDisplayName)
         {
             if (!_shopProgressionEnabled) return true;
-            if (!_shopGroupByTalisman.TryGetValue(talismanDisplayName, out int groupIndex))
+            if (!GameData.TalismanIds.TryGetValue(talismanDisplayName, out var talismanId)
+                || !_shopGroupByTalisman.TryGetValue(talismanId, out int groupIndex))
                 return true;
 
             int expansions = 0;
@@ -823,6 +853,22 @@ namespace RubiniteAP
 
             // Free groups = starting groups + received expansions
             return groupIndex < (_startingShopGroups + expansions);
+        }
+
+        public bool IsShopTalismanUnlocked(string talismanDisplayName)
+        {
+            if (!ApRunActive || string.IsNullOrEmpty(talismanDisplayName)
+                || !_shopLocationIds.ContainsKey(talismanDisplayName))
+                return true;
+
+            if (_shopProgressionEnabled)
+                return IsShopGroupUnlocked(talismanDisplayName);
+
+            if (!GameData.TalismanIds.TryGetValue(talismanDisplayName, out var talismanId)
+                || !_shopSlotByTalismanId.TryGetValue(talismanId, out var slotIndex))
+                return true;
+
+            return slotIndex < GetUnlockedShopSlotCount();
         }
 
         private void OnItemsReceived(int index, List<NetworkItem> items)
@@ -3926,13 +3972,19 @@ namespace RubiniteAP
                 int expansions = 0;
                 foreach (var item in State.Items)
                     if (item == "Shop Expansion") expansions++;
-                unlocked += expansions * _slotsPerShopExpansion;
+                unlocked = Mathf.Max(30, unlocked) + expansions * _slotsPerShopExpansion;
+            }
+            else if (_hasBossShopSlotSchedule)
+            {
+                var kills = Mathf.Min(CurrentBossKillCount, _bossShopSlotUnlocks.Count);
+                for (var i = 0; i < kills; i++)
+                    unlocked += _bossShopSlotUnlocks[i];
             }
             else
             {
                 unlocked += CurrentBossKillCount * _slotsPerBossKill;
             }
-            return Mathf.Min(unlocked, 45);
+            return Mathf.Min(unlocked, _maxShopSlots);
         }
 
         public long GetShopLocationIdForIndex(int index)
