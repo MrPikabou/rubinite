@@ -801,12 +801,16 @@ namespace RubiniteAP
             {
                 int flags = _scoutedShopFlags.TryGetValue(talismanTitle, out var f) ? f : 0;
                 string kind;
-                if ((flags & 1) != 0)      kind = "a progression item that another player needs to finish their game";
-                else if ((flags & 2) != 0) kind = "a useful item for another player";
-                else if ((flags & 4) != 0) kind = "a trap that may hinder another player";
-                else                       kind = "a filler item for another player";
+                string colorHex;
+                
+                // Determine the importance and its color
+                if ((flags & 1) != 0)      { kind = "Progression"; colorHex = "#FFD264"; } // Gold
+                else if ((flags & 2) != 0) { kind = "Useful";      colorHex = "#96C8FF"; } // Blue
+                else if ((flags & 4) != 0) { kind = "Trap";        colorHex = "#FF6464"; } // Red
+                else                       { kind = "Filler";      colorHex = "#969696"; } // Gray
 
-                description = $"An item from another world — {kind}.";
+                // Format the description with the colored importance tag
+                description = $"An <color={colorHex}><b>{kind}</b></color> item from another world.";
                 icon = PickIconForItem(apItemName, isCrossGame: true);
                 return true;
             }
@@ -876,6 +880,32 @@ namespace RubiniteAP
             description = "An item from another world.";
             icon = PickIconForItem(apItemName);
             return true;
+        }
+
+        public string GetImportanceDisplay(string itemName, string locationName)
+        {
+            if (string.IsNullOrEmpty(itemName)) return "";
+
+            // Local Progression Items
+            if (itemName.EndsWith(" Sigil") || itemName == "Shop Expansion")
+                return "<color=#FFD264><b>Progression</b></color>";
+            
+            // Local Useful Items
+            if (itemName.StartsWith("Skill ") || itemName.StartsWith("Talisman: "))
+                return "<color=#96C8FF><b>Useful</b></color>";
+
+            // Cross-game items (based on AP flags)
+            if (_crossGameScoutedTitles.Contains(locationName))
+            {
+                int flags = _scoutedShopFlags.TryGetValue(locationName, out var f) ? f : 0;
+                if ((flags & 1) != 0) return "<color=#FFD264><b>Progression (Other Player)</b></color>";
+                if ((flags & 2) != 0) return "<color=#96C8FF><b>Useful (Other Player)</b></color>";
+                if ((flags & 4) != 0) return "<color=#FF6464><b>Trap (Other Player)</b></color>";
+                return "<color=#969696><b>Filler (Other Player)</b></color>";
+            }
+
+            // Fallback (Local Filler)
+            return "<color=#969696><b>Filler</b></color>";
         }
 
         private bool IsShopGroupUnlocked(string talismanDisplayName)
@@ -1962,12 +1992,10 @@ namespace RubiniteAP
                     // Shop visibility (storeState)
                     // - Purchased → hide (already own it)
                     // - Group locked → hide (Shop Expansion not received yet)
-                    // - Received → show as owned
+                    // - Received → show as buyable (so they can still get the check)
                     // - Otherwise → show as buyable
                     if (isPurchased || !groupUnlocked)
                         talisman.storeState?.SetValue(AchievementState.Lock);
-                    else if (received)
-                        talisman.storeState?.SetValue(AchievementState.Unlock);
                     else
                         talisman.storeState?.SetValue(AchievementState.ReadyToUnlock);
 
@@ -2167,25 +2195,28 @@ namespace RubiniteAP
                 }
 
                 // Clear equipped talismans on start
-                var core = GetGamePlayCore();
-                if (core != null && core.equippedTalismanList != null)
+                if (!_flagsInitializedThisRun)
                 {
-                    core.equippedTalismanList.Clear();
-                }
-
-                // Clear isEquipped flags on ALL talismans at run start, so stale flags
-                // from previous runs don't leak through
-                var talOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
-                if (talOverview != null)
-                {
-                    foreach (var tal in talOverview.GetAllData())
+                    var core = GetGamePlayCore();
+                    if (core != null && core.equippedTalismanList != null)
                     {
-                        if (tal == null) continue;
-                        if (string.IsNullOrEmpty(tal.DisplayName)) continue;
-                        if (tal.DisplayName.Contains("Exhibition")) continue;
-                        if (tal.DisplayName.Contains("TalismanData_")) continue;
-                        if (tal.DisplayName == "X19_Shield" || tal.DisplayName == "無") continue;
-                        tal.isEquipped?.SetValue(0);
+                        core.equippedTalismanList.Clear();
+                    }
+
+                    // Clear isEquipped flags on ALL talismans at run start, so stale flags
+                    // from previous runs don't leak through
+                    var talOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+                    if (talOverview != null)
+                    {
+                        foreach (var tal in talOverview.GetAllData())
+                        {
+                            if (tal == null) continue;
+                            if (string.IsNullOrEmpty(tal.DisplayName)) continue;
+                            if (tal.DisplayName.Contains("Exhibition")) continue;
+                            if (tal.DisplayName.Contains("TalismanData_")) continue;
+                            if (tal.DisplayName == "X19_Shield" || tal.DisplayName == "無") continue;
+                            tal.isEquipped?.SetValue(0);
+                        }
                     }
                 }
 
@@ -2429,8 +2460,21 @@ namespace RubiniteAP
             var flawless = noHit && noTalisman;
             
             var rankAchieved = false;
+            int actualRank = 4;
+
             if (manager.levelTimer != null && manager.levelData.gradingScale != null && manager.levelData.gradingScale.Length > 0)
             {
+                float actualThreshold = manager.levelData.gradingTime;
+                for (int j = 0; j < manager.levelData.gradingScale.Length; j++)
+                {
+                    actualThreshold += manager.levelData.gradingScale[j];
+                    if (manager.levelTimer.timer <= actualThreshold)
+                    {
+                        actualRank = j;
+                        break;
+                    }
+                }
+
                 if (_requiredRankIndex >= manager.levelData.gradingScale.Length)
                 {
                     // The player asked for a rank lower than the game's lowest tracked rank (e.g., C when only S, A, B exist).
@@ -2440,14 +2484,16 @@ namespace RubiniteAP
                 }
                 else
                 {
-                    float threshold = manager.levelData.gradingTime;
+                    float requiredThreshold = manager.levelData.gradingTime;
                     for (int j = 0; j <= _requiredRankIndex; j++)
-                        threshold += manager.levelData.gradingScale[j];
+                        requiredThreshold += manager.levelData.gradingScale[j];
 
-                    rankAchieved = manager.levelTimer.timer <= threshold;
-                    AddLog($"Rank debug: req={_requiredRankIndex}, time={manager.levelTimer.timer:F1}, max={threshold:F1}");
+                    rankAchieved = manager.levelTimer.timer <= requiredThreshold;
+                    AddLog($"Rank debug: req={_requiredRankIndex}, time={manager.levelTimer.timer:F1}, max={requiredThreshold:F1}");
                 }
             }
+
+            LogBossDefeatToFile(boss, manager, actualRank, _requiredRankIndex, manager.Hits);
 
             if (boss.Key == "DarkRuby")
             {
@@ -2528,6 +2574,69 @@ namespace RubiniteAP
             }
 
             FixReturnPortal();
+        }
+        
+        // TODO DELETE; ONLY FOR LOGIC LOGGING
+        private void LogBossDefeatToFile(BossInfo boss, LevelManager manager, int actualRank, int requiredRank, int hitsTaken)
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                var core = GetGamePlayCore();
+
+                string[] rankNames = { "S", "A", "B", "C", "No Rank" };
+                string rankStr = actualRank < rankNames.Length ? rankNames[actualRank] : "Unknown";
+                string reqRankStr = requiredRank < rankNames.Length ? rankNames[requiredRank] : "Unknown";
+
+                sb.AppendLine("========================================");
+                sb.AppendLine($"BOSS DEFEATED: {boss.Name}");
+                sb.AppendLine($"Date: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                sb.AppendLine($"Time: {manager.levelTimer.timer:F2}s");
+                sb.AppendLine($"Rank: {rankStr} (Required: {reqRankStr})");
+                sb.AppendLine($"Hits Taken: {hitsTaken}");
+
+                sb.Append("Talismans Equipped: ");
+                if (core?.equippedTalismanList != null && core.equippedTalismanList.Count > 0)
+                {
+                    var tNames = new List<string>();
+                    foreach (var t in core.equippedTalismanList)
+                        if (t?.talismanData != null) tNames.Add(t.talismanData.DisplayName);
+                    sb.AppendLine(tNames.Count > 0 ? string.Join(", ", tNames) : "None");
+                }
+                else sb.AppendLine("None");
+
+                sb.AppendLine("Unlocked Skills:");
+                var skillOverview = SingletonScriptableObject<SkillTreeDataOverview>.Instance;
+                if (skillOverview != null)
+                {
+                    var skillNames = new List<string>();
+                    foreach (var tree in skillOverview.GetAllData())
+                    {
+                        if (tree == null || tree.skillTreeDataDetail == null) continue;
+                        
+                        if (tree.skillTreeDataDetail.isUnlocked != null && tree.skillTreeDataDetail.isUnlocked.GetValue())
+                        {
+                            if (GameData.SkillTitles.TryGetValue(tree.DisplayName, out var title))
+                                skillNames.Add($"- {title}");
+                        }
+                    }
+                    if (skillNames.Count > 0) sb.AppendLine(string.Join("\n", skillNames));
+                    else sb.AppendLine("- None (Only Free Skills)");
+                }
+                else sb.AppendLine("- Unknown (SkillTreeDataOverview missing)");
+
+                sb.AppendLine("========================================");
+                sb.AppendLine();
+
+                string logPath = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "RubiniteAP_BossLog.txt");
+                System.IO.File.AppendAllText(logPath, sb.ToString());
+                
+                AddLog($"Boss stats saved to RubiniteAP_BossLog.txt");
+            }
+            catch (Exception ex)
+            {
+                AddLog("Failed to write boss log: " + ex.Message);
+            }
         }
 
         public static string GetTargetLevel(OnEnableLoadLevel component)
@@ -3670,22 +3779,20 @@ namespace RubiniteAP
 
         private void OnDeathLinkReceived(string source, string cause)
         {
-                if (!ApRunActive || !DeathLinkActive) return;
-                var sceneName = SceneManager.GetActiveScene().name;
-                if (sceneName == "TitleMenu" || sceneName == ChallengeAreaScene) return;
+            if (!ApRunActive || !DeathLinkActive) return;
+            var sceneName = SceneManager.GetActiveScene().name;
+            if (sceneName == "TitleMenu" || sceneName == ChallengeAreaScene) return;
 
-                AddLog($"{source} sends their regards: {cause}");
-                
-                DeathLinkReceivedMessage?.Invoke(source, cause);
+            AddLog($"{source} sends their regards: {cause}");
+            
+            DeathLinkReceivedMessage?.Invoke(source, cause);
 
-                var core = GetGamePlayCore();
-                if (core?.player == null) return;
+            var core = GetGamePlayCore();
+            if (core?.player == null) return;
 
             if (TryKillLocalPlayer(core.player))
             {
                 AddLog("Local player killed by DeathLink.");
-                _lastKnownPlayerHp = -1;
-                _playerDeathFired = false;
                 _killedByDeathLink = true;
             }
             else

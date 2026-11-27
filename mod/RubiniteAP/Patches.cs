@@ -786,10 +786,19 @@ namespace RubiniteAP
         private static void Postfix(SkillTreeFrame __instance)
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge == null || !bridge.ApRunActive) return;
-
             var data = __instance.skillTreeData;
             if (data == null) return;
+
+            if (bridge == null || !bridge.ApRunActive)
+            {
+                var vanillaIcon = __instance.skillData?.Icon;
+                if (vanillaIcon != null)
+                {
+                    if (__instance.icon != null) { __instance.icon.sprite = vanillaIcon; __instance.icon.rectTransform.localScale = Vector3.one; }
+                    if (__instance.fakeIcon != null) { __instance.fakeIcon.sprite = vanillaIcon; __instance.fakeIcon.rectTransform.localScale = Vector3.one; }
+                }
+                return;
+            }
 
             // Only revert to vanilla if the CHECK is purchased.
             bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
@@ -855,11 +864,15 @@ namespace RubiniteAP
                 if (i != null) apIcon = i;
             }
 
+            string importance = bridge.GetImportanceDisplay(apItemName, data.DisplayName);
+
             __instance.selectedTitleText.uneditedText = apTitle;
 
             var combined = "Buying this slot sends a location check to the multiworld.\n"
-                        + "You will receive: " + apItemName + ".\n"
+                        + "You will receive: " + apItemName + "\n"
+                        + $"Importance: {importance}\n\n"
                         + (apDesc ?? "");
+
             __instance.selectedDescriptionText_NoVideo?.SetText(combined);
             __instance.selectedDescriptionText_HasVideo?.SetText(combined);
 
@@ -946,7 +959,7 @@ namespace RubiniteAP
         }
     }
 
-        [HarmonyPatch(typeof(SkillTreeFrame), "Update")]
+    [HarmonyPatch(typeof(SkillTreeFrame), "Update")]
     internal static class SkillTreeFrameUpdatePatch
     {
         // Reflection, um den read-only Preis temporär zu überschreiben
@@ -989,18 +1002,18 @@ namespace RubiniteAP
                 SetSkillCost(__instance.skillTreeData, __state);
 
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge == null || !bridge.ApRunActive) return;
             var data = __instance.skillTreeData;
             if (data == null) return;
 
-            int price = data.cost;
-            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var p))
-                price = p;
-            
-            if (price != data.cost)
+            if (bridge == null || !bridge.ApRunActive)
             {
-                __instance.costText?.SetText(price.ToString());
-                __instance.costText2?.SetText(price.ToString());
+                var vanillaIcon = __instance.skillData?.Icon;
+                if (vanillaIcon != null)
+                {
+                    if (__instance.icon != null && __instance.icon.sprite != vanillaIcon) { __instance.icon.sprite = vanillaIcon; __instance.icon.rectTransform.localScale = Vector3.one; }
+                    if (__instance.fakeIcon != null && __instance.fakeIcon.sprite != vanillaIcon) { __instance.fakeIcon.sprite = vanillaIcon; __instance.fakeIcon.rectTransform.localScale = Vector3.one; }
+                }
+                return;
             }
 
             bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
