@@ -227,8 +227,8 @@ class DeathLinkAmnesty(Range):
     """Deaths forgiven before one is shared (0 = every death)."""
     display_name = "Death Link Amnesty"
     range_start = 0
-    range_end = 30
-    default = 3
+    range_end = 100
+    default = 10
 
 
 @dataclass
