@@ -73,8 +73,6 @@ namespace RubiniteAP
         public float DarkRubyGradingTime { get; set; } = 60f;
         public float[] DarkRubyGradingScale { get; set; } = new[] { 10f, 20f, 40f };
         public bool DarkRubyCompleted { get; set; }
-        private bool _isHardcodedDarkRubyActive = false;
-        public bool IsHardcodedDarkRubyActive => _isHardcodedDarkRubyActive;
         public bool DarkRubyDeathHandled { get; set; }
         public bool DarkRubyTimerPausedForCutscene { get; set; }
         public string LastDarkRubyCutsceneName { get; set; }
@@ -98,6 +96,8 @@ namespace RubiniteAP
         private bool _darkRubySkinApplied;
         public bool IsDarkRubySkinEnabled => ApRunActive
             && (_playerColorKey == "darkruby" || _darkRubyForceSkin);
+        public bool IsHardcodedDarkRubyActive =>
+            IsDarkRubySkinEnabled && !State.ApSkinPreferenceInitialized;
         private SpriteRenderer _cachedGirlSr;
 
         private readonly Dictionary<string, Sprite> _customSpriteCache = new();
@@ -143,6 +143,9 @@ namespace RubiniteAP
         private string _skillPriceMode = "vanilla";
 
         private bool _flagsInitializedThisRun;
+        private bool _apLoadoutCaptureReady;
+        private bool _skillTreeHintsRequestedForMenu;
+        private float _apProfileCaptureTimer;
         private string _playerColorKey = "default";
 
         private bool _seedHasDeathLink;
@@ -193,6 +196,7 @@ namespace RubiniteAP
 
         private readonly Dictionary<long, ScoutedLocationInfo> _scoutedLocations = new();
         private readonly List<ReceivedItemRecord> _receivedHistory = new();
+        private readonly HashSet<long> _hintScoutLocationsRequested = new();
 
         public int MySlot => _mySlot;
 
@@ -216,7 +220,6 @@ namespace RubiniteAP
             Client.ItemsReceived += OnItemsReceived;
             Client.ConnectionChanged += OnConnectionChanged;
             Client.LocationScouted += OnLocationScouted;
-            Client.DataPackageReady += OnDataPackageReady;
             Client.Log += AddLog;
             Client.DeathLinkReceived += OnDeathLinkReceived;
         }
@@ -270,6 +273,12 @@ namespace RubiniteAP
                 State.Save();
             }
 
+            _scoutedShopItems.Clear();
+            _scoutedShopFlags.Clear();
+            _scoutedSkillItemByTreeId.Clear();
+            _crossGameScoutedTitles.Clear();
+            _hintScoutLocationsRequested.Clear();
+
             _itemNames.Clear();
             if (info.SlotData?["item_ids"] is JObject itemIds)
             {
@@ -317,12 +326,6 @@ namespace RubiniteAP
             _maxShopSlots = info.SlotData?["max_shop_slots"]?.Value<int>()
                 ?? Mathf.Max(30, 30 + _extraShopLocationIds.Count);
 
-            if (_shopLocationIds.Count > 0)
-            {
-                Client.RequestLocationScoutsWhenReady(_shopLocationIds.Values);
-                AddLog("Queued scouts for " + _shopLocationIds.Count + " shop slots (waiting for DataPackage).");
-            }
-
             _skillTreeLocationIds.Clear();
             _skillTreeLocIdByTreeId.Clear();
             if (info.SlotData?["skill_tree_locations"] is JObject stLoc)
@@ -343,12 +346,6 @@ namespace RubiniteAP
                     }
                 }
                 AddLog("Skill tree locations loaded (" + _skillTreeLocationIds.Count + " entries).");
-            }
-
-            if (_skillTreeLocationIds.Count > 0)
-            {
-                Client.RequestLocationScoutsWhenReady(_skillTreeLocationIds.Values);
-                AddLog("Queued scouts for " + _skillTreeLocationIds.Count + " skill tree slots.");
             }
 
             _shopPriceMode = info.SlotData?["shop_price_mode"]?.ToString() ?? "vanilla";
@@ -545,7 +542,8 @@ namespace RubiniteAP
             }
             AddLog("Enabled checks: " + string.Join(", ", _enabledChecks));
 
-            // Scout all boss locations so the tracker can resolve "which item did I send?"
+            // Privately scout item locations up front so shop and skill icons are ready
+            // when their menus open. Public hints are still requested only when visible.
             var trackerScoutTargets = new HashSet<long>();
             foreach (var levelName in _bossSlotInfoByLevel.Keys)
             {
@@ -561,6 +559,12 @@ namespace RubiniteAP
                 if (bossChecks.Contains("flawless"))   trackerScoutTargets.Add(boss.LocationBase + 3);
                 if (bossChecks.Contains("rank"))       trackerScoutTargets.Add(boss.LocationBase + 4);
             }
+            foreach (var locationId in _shopLocationIds.Values)
+                trackerScoutTargets.Add(locationId);
+            foreach (var locationId in _extraShopLocationIds.Values)
+                trackerScoutTargets.Add(locationId);
+            foreach (var locationId in _skillTreeLocationIds.Values)
+                trackerScoutTargets.Add(locationId);
             foreach (var loc in info.CheckedLocations)
                 trackerScoutTargets.Add(loc);
 
@@ -679,6 +683,9 @@ namespace RubiniteAP
             if (title == null)
                 foreach (var kv in _skillTreeLocationIds)
                     if (kv.Value == locationId) { title = kv.Key; break; }
+            if (title == null)
+                foreach (var kv in _extraShopLocationIds)
+                    if (kv.Value == locationId) { title = ExtraShopSlotTitle(kv.Key); break; }
             
             if (title == null) return;
 
@@ -707,7 +714,18 @@ namespace RubiniteAP
                 {
                     var treeId = parts[1].Trim().Replace('-', '_');
                     _scoutedSkillItemByTreeId[treeId] = display;
+                    _scoutedShopFlags[treeId] = flags;
+                    if (isCrossGame)
+                        _crossGameScoutedTitles.Add(treeId);
+                    else
+                        _crossGameScoutedTitles.Remove(treeId);
+
+                    SkillTreeInitDisplayPatch.RefreshScoutedIcon(this, treeId, display);
                 }
+            }
+            else
+            {
+                CreateItemMenuEnterPatch.RefreshScoutedShopIcon(this, locationId);
             }
         }
 
@@ -718,13 +736,66 @@ namespace RubiniteAP
         {
             talismanId = null;
             itemName = null;
-            return TryGetShopTalismanIdForIndex(slotIndex, out talismanId)
-                && _scoutedShopItems.TryGetValue(talismanId, out itemName);
+            if (TryGetShopTalismanIdForIndex(slotIndex, out talismanId)
+                && _scoutedShopItems.TryGetValue(talismanId, out itemName))
+                return true;
+
+            talismanId = ExtraShopSlotTitle(slotIndex);
+            return _scoutedShopItems.TryGetValue(talismanId, out itemName);
         }
+
+        private static string ExtraShopSlotTitle(int slotIndex)
+            => "AP Extra Shop Slot " + (slotIndex + 1);
         
         public bool TryGetScoutedSkillTreeItem(string treeDisplayId, out string itemName)
         {
-            return _scoutedSkillItemByTreeId.TryGetValue(treeDisplayId, out itemName);
+            return _scoutedSkillItemByTreeId.TryGetValue(
+                NormalizeSkillTreeDisplayId(treeDisplayId), out itemName);
+        }
+
+        public void RequestVisibleShopHints(int unlockedSlotCount)
+        {
+            var locations = new List<long>();
+            for (var index = 0; index < unlockedSlotCount; index++)
+            {
+                var locationId = GetShopLocationIdForIndex(index);
+                if (locationId > 0)
+                    locations.Add(locationId);
+            }
+
+            RequestVisibleLocationHints(locations);
+        }
+
+        public void RequestVisibleSkillTreeHints(IEnumerable<string> visibleTreeIds)
+        {
+            var locations = new List<long>();
+            foreach (var treeId in visibleTreeIds)
+            {
+                if (!string.IsNullOrEmpty(treeId)
+                    && _skillTreeLocIdByTreeId.TryGetValue(
+                        NormalizeSkillTreeDisplayId(treeId), out var locationId))
+                    locations.Add(locationId);
+            }
+
+            RequestVisibleLocationHints(locations);
+        }
+
+        private void RequestVisibleLocationHints(IEnumerable<long> locations)
+        {
+            if (!Client.IsConnected) return;
+
+            var newLocations = new List<long>();
+            foreach (var locationId in locations)
+            {
+                if (locationId > 0
+                    && !State.HasChecked(locationId)
+                    && _hintScoutLocationsRequested.Add(locationId))
+                    newLocations.Add(locationId);
+            }
+
+            if (newLocations.Count == 0) return;
+            Client.RequestLocationScoutsWhenReady(newLocations, createAsHint: true);
+            AddLog($"Requested hints for {newLocations.Count} currently visible shop/skill locations.");
         }
 
         /// <summary>
@@ -775,7 +846,7 @@ namespace RubiniteAP
 
             // slot_data keys use hyphens ("2-1"); SkillTreeData.DisplayName uses
             // underscores ("2_1"). Normalize before lookup.
-            var normalized = treeId.Replace('_', '-');
+            var normalized = GameData.NormalizeSkillTreeDisplayId(treeId).Replace('_', '-');
             return _effectiveSkillPrices.TryGetValue(normalized, out price);
         }
 
@@ -803,10 +874,10 @@ namespace RubiniteAP
                 string kind;
                 string colorHex;
 
-                if ((flags & 1) != 0)      { kind = "Progression"; colorHex = "#FFD264"; }
-                else if ((flags & 2) != 0) { kind = "Useful";      colorHex = "#96C8FF"; }
-                else if ((flags & 4) != 0) { kind = "Trap";        colorHex = "#FF6464"; }
-                else                       { kind = "Filler";      colorHex = "#707070"; }
+                if ((flags & 1) != 0)      { kind = "Progression"; colorHex = "#956300"; }
+                else if ((flags & 2) != 0) { kind = "Useful";      colorHex = "#245F8F"; }
+                else if ((flags & 4) != 0) { kind = "Trap";        colorHex = "#9C2D2D"; }
+                else                       { kind = "Filler";      colorHex = "#626262"; }
 
                 description = $"An <color={colorHex}><b>{kind}</b></color> item from another world.";
                 icon = PickIconForItem(apItemName, isCrossGame: true);
@@ -884,29 +955,38 @@ namespace RubiniteAP
         {
             if (string.IsNullOrEmpty(itemName)) return "";
 
-            if (itemName.EndsWith(" Sigil") || itemName == "Shop Expansion")
-                return "<color=#FFD264><b>Progression</b></color>";
-            
-            if (itemName.StartsWith("Skill ") || itemName.StartsWith("Talisman: "))
-                return "<color=#96C8FF><b>Useful</b></color>";
-
-            if (_crossGameScoutedTitles.Contains(locationName))
+            if (!string.IsNullOrEmpty(locationName) && _crossGameScoutedTitles.Contains(locationName))
             {
                 int flags = _scoutedShopFlags.TryGetValue(locationName, out var f) ? f : 0;
-                if ((flags & 1) != 0) return "<color=#FFD264><b>Progression (Other Player)</b></color>";
-                if ((flags & 2) != 0) return "<color=#96C8FF><b>Useful (Other Player)</b></color>";
-                if ((flags & 4) != 0) return "<color=#FF6464><b>Trap (Other Player)</b></color>";
-                return "<color=#707070><b>Filler (Other Player)</b></color>";
+                if ((flags & 1) != 0) return "<color=#956300><b>Progression (Other Player)</b></color>";
+                if ((flags & 2) != 0) return "<color=#245F8F><b>Useful (Other Player)</b></color>";
+                if ((flags & 4) != 0) return "<color=#9C2D2D><b>Trap (Other Player)</b></color>";
+                return "<color=#626262><b>Filler (Other Player)</b></color>";
             }
 
-            return "<color=#707070><b>Filler</b></color>";
+            if (itemName.EndsWith(" Sigil")
+                || itemName == "Shop Expansion"
+                || itemName.StartsWith("Shop Expansion: "))
+                return "<color=#956300><b>Progression</b></color>";
+
+            if (itemName.StartsWith("Skill ") || itemName.StartsWith("Talisman: "))
+                return "<color=#245F8F><b>Useful</b></color>";
+
+            return "<color=#626262><b>Filler</b></color>";
         }
 
         public long GetShopLocationIdForDisplayName(string displayName)
         {
+            if (string.IsNullOrEmpty(displayName))
+                return 0;
             if (_shopLocationIds.TryGetValue(displayName, out long id)) return id;
-            if (GameData.TalismanIds.TryGetValue(displayName, out var talismanId) 
-                && _shopLocationIds.TryGetValue(talismanId, out id)) return id;
+            if (TryGetShopTalismanId(displayName, out var talismanId))
+            {
+                if (_shopLocationIds.TryGetValue(talismanId, out id))
+                    return id;
+                if (_shopSlotByTalismanId.TryGetValue(talismanId, out var slotIndex))
+                    return GetShopLocationIdForIndex(slotIndex);
+            }
             return 0;
         }
 
@@ -1055,12 +1135,24 @@ namespace RubiniteAP
 
                 if (isNewItem && _fillerDustValues.TryGetValue(name, out int dustValue))
                 {
+                    var coreDust = GetGamePlayCore()?.dust;
+                    var settingsDust = GameSetting.Instance?.dustFlag;
                     if (ApRunActive && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber
-                        && GameSetting.Instance?.dustFlag != null)
+                        && (coreDust != null || settingsDust != null))
                     {
-                        int currentDust = GameSetting.Instance.dustFlag.GetValue();
-                        GameSetting.Instance.dustFlag.SetValue(currentDust + dustValue, "RubiniteAP");
-                        State.LastKnownDust = currentDust + dustValue;
+                        int targetDust;
+                        if (coreDust != null)
+                        {
+                            targetDust = coreDust.GetValue() + dustValue;
+                            coreDust.SetValue(targetDust, "RubiniteAP");
+                        }
+                        else
+                        {
+                            targetDust = settingsDust.GetValue() + dustValue;
+                        }
+                        if (settingsDust != null)
+                            settingsDust.SetValue(targetDust, "RubiniteAP");
+                        State.LastKnownDust = targetDust;
                         AddLog($"Dust via item: +{dustValue} → {State.LastKnownDust} (in-run)");
                         try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
                         catch (Exception ex) { AddLog("Could not persist dust after item: " + ex.Message); }
@@ -1156,6 +1248,35 @@ namespace RubiniteAP
                 return;
 
             var sceneName = SceneManager.GetActiveScene().name;
+            bool skillTreeMenuOpen = ApRunActive
+                && MenuCore.Instance != null
+                && MenuCore.Instance.currentMenu is SkillTreeMenu;
+            if (!skillTreeMenuOpen)
+            {
+                _skillTreeHintsRequestedForMenu = false;
+            }
+            else if (!_skillTreeHintsRequestedForMenu)
+            {
+                var visibleTreeIds = new List<string>(
+                    SkillTreeMenuDetailPatch.GetVisibleSkillTreeIdsForHintRequest());
+                if (visibleTreeIds.Count > 0)
+                {
+                    RequestVisibleSkillTreeHints(visibleTreeIds);
+                    _skillTreeHintsRequestedForMenu = true;
+                }
+            }
+
+            if (ApRunActive && _apLoadoutCaptureReady
+                && DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
+            {
+                _apProfileCaptureTimer += Time.unscaledDeltaTime;
+                if (_apProfileCaptureTimer >= 0.5f)
+                {
+                    _apProfileCaptureTimer = 0f;
+                    PersistApProfilePreferences();
+                }
+            }
+
             if (!ApRunActive && sceneName == ChallengeAreaScene)
                 _inactiveSkinSnapshotApplied = RestoreVanillaSkinIfPending(true);
 
@@ -1180,12 +1301,14 @@ namespace RubiniteAP
             {
                 PersistChallengeSaveProfile();
                 ApRunActive = false;
+                _apLoadoutCaptureReady = false;
             }
 
             if (ApRunActive && sceneName == "TitleMenu")
             {
                 PersistChallengeSaveProfile();
                 ApRunActive = false;
+                _apLoadoutCaptureReady = false;
                 _lastLoadedLevel = null;
                 _lastPortalLevel = null;
                 _podiumClickPending = null;
@@ -1287,7 +1410,7 @@ namespace RubiniteAP
                     }
                 }
 
-                if (_isHardcodedDarkRubyActive && ApRunActive)
+                if (IsHardcodedDarkRubyActive)
                 {
                     var girl = GetGirlSr();
                     if (girl != null && (!_darkRubySkinApplied || girl.material == null 
@@ -1431,6 +1554,9 @@ namespace RubiniteAP
 
             try
             {
+                _apLoadoutCaptureReady = false;
+                _apProfileCaptureTimer = 0f;
+
                 if (!BackupVanillaSkin())
                 {
                     _startingRun = false;
@@ -1484,6 +1610,7 @@ namespace RubiniteAP
             catch (Exception ex)
             {
                 ApRunActive = false;
+                _apLoadoutCaptureReady = false;
                 _inactiveSkinSnapshotApplied = RestoreVanillaSkinIfPending(false);
                 _startingRun = false;
                 AddLog("Could not start the run: " + ex.Message);
@@ -1639,6 +1766,151 @@ namespace RubiniteAP
             {
                 AddLog("Could not save Vanilla Ruby skin preference: " + ex.Message);
             }
+        }
+
+        public void RecordApSkinPreference()
+        {
+            if (!ApRunActive || DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
+                return;
+
+            var snapshot = CaptureCurrentSkin();
+            if (snapshot == null)
+            {
+                AddLog("Could not save AP Ruby skin preference: current skin is unavailable.");
+                return;
+            }
+
+            bool changed = !State.ApSkinPreferenceInitialized
+                || State.ApRubySkinId != snapshot.RubySkinId
+                || State.ApCurrentSkinId != snapshot.CurrentSkinId
+                || State.ApHasCurrentSkinFlag != snapshot.HasCurrentSkinFlag;
+            if (!changed) return;
+
+            State.ApRubySkinId = snapshot.RubySkinId;
+            State.ApCurrentSkinId = snapshot.CurrentSkinId;
+            State.ApHasCurrentSkinFlag = snapshot.HasCurrentSkinFlag;
+            State.ApSkinPreferenceInitialized = true;
+            State.Save();
+            if (!ApplySkinSnapshot(snapshot))
+                AddLog("Could not refresh AP Ruby skin after selection.");
+            AddLog($"AP Ruby skin preference saved: '{snapshot.RubySkinId}'.");
+        }
+
+        public void OnGamePlaySetUpCompleted()
+        {
+            if (!ApRunActive || DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
+                return;
+            if (SingletonScriptableObject<TalismanDataOverview>.Instance == null)
+            {
+                AddLog("Could not capture AP talisman loadout: talisman data is unavailable.");
+                return;
+            }
+
+            _apLoadoutCaptureReady = true;
+            PersistApProfilePreferences();
+        }
+
+        private void PersistApProfilePreferences()
+        {
+            if (!ApRunActive || !_apLoadoutCaptureReady
+                || DataSaver.currentSaveNumber != GameData.ChallengeSaveNumber)
+                return;
+
+            bool changed = false;
+            var core = GetGamePlayCore();
+            if (core?.equippedTalismanList != null)
+            {
+                var equipped = new List<string>();
+                foreach (var talisman in core.equippedTalismanList)
+                {
+                    var data = talisman?.talismanData;
+                    if (data == null || string.IsNullOrEmpty(data.DisplayName)
+                        || !IsReceivedTalisman(data)
+                        || equipped.Contains(data.DisplayName))
+                        continue;
+                    equipped.Add(data.DisplayName);
+                }
+
+                if (!AreStringListsEqual(State.ApEquippedTalismans, equipped))
+                {
+                    State.ApEquippedTalismans = equipped;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                State.Save();
+        }
+
+        private static bool AreStringListsEqual(List<string> first, List<string> second)
+        {
+            if (first == null || second == null || first.Count != second.Count)
+                return false;
+            for (int i = 0; i < first.Count; i++)
+                if (first[i] != second[i])
+                    return false;
+            return true;
+        }
+
+        private bool ApplySavedApSkinSnapshot()
+        {
+            if (!HasSavedApSkinPreference())
+                return false;
+
+            var snapshot = new VanillaSkinSnapshot
+            {
+                RubySkinId = State.ApRubySkinId,
+                CurrentSkinId = State.ApCurrentSkinId,
+                HasCurrentSkinFlag = State.ApHasCurrentSkinFlag
+            };
+            if (!ApplySkinSnapshot(snapshot))
+                AddLog("Could not apply the saved AP Ruby skin preference.");
+            return true;
+        }
+
+        private bool ApplySavedApSkinFlags()
+        {
+            if (!HasSavedApSkinPreference())
+                return false;
+
+            var gameSetting = GameSetting.Instance;
+            if (gameSetting?.rubySkinID == null)
+            {
+                AddLog("Could not apply saved AP Ruby skin flags: game settings are unavailable.");
+                return true;
+            }
+
+            var currentSkinFlag = SingletonScriptableObject<ItemDataOverview>.Instance?.currentSkinIDFlag;
+            if (State.ApHasCurrentSkinFlag && currentSkinFlag == null)
+            {
+                AddLog("Could not apply saved AP Ruby skin flags: current skin data is unavailable.");
+                return true;
+            }
+
+            gameSetting.rubySkinID.SetValue(State.ApRubySkinId, "RubiniteAP");
+            if (State.ApHasCurrentSkinFlag)
+                currentSkinFlag.SetValue(State.ApCurrentSkinId, "RubiniteAP");
+            return true;
+        }
+
+        private bool HasSavedApSkinPreference()
+        {
+            if (string.IsNullOrEmpty(State.ApRubySkinId))
+                return false;
+            if (State.ApSkinPreferenceInitialized)
+                return true;
+
+            var vanillaPreference = LoadVanillaSkinPreference();
+            if (vanillaPreference != null
+                && vanillaPreference.RubySkinId == State.ApRubySkinId
+                && vanillaPreference.CurrentSkinId == State.ApCurrentSkinId
+                && vanillaPreference.HasCurrentSkinFlag == State.ApHasCurrentSkinFlag)
+                return false;
+
+            State.ApSkinPreferenceInitialized = true;
+            State.Save();
+            AddLog($"Migrated AP Ruby skin preference: '{State.ApRubySkinId}'.");
+            return true;
         }
 
         private IEnumerator ApplyVanillaSkinPreferenceAfterSceneLoad()
@@ -1848,6 +2120,7 @@ namespace RubiniteAP
         public void PersistChallengeSaveProfile()
         {
             if (!ApRunActive) return;
+            PersistApProfilePreferences();
             try
             {
                 var source = IOPath.Combine(
@@ -1935,14 +2208,16 @@ namespace RubiniteAP
         {
             if (tree == null || string.IsNullOrEmpty(tree.DisplayName))
                 return false;
-            return _skillItemByTreeId.TryGetValue(tree.DisplayName, out var itemName)
+            return _skillItemByTreeId.TryGetValue(
+                       NormalizeSkillTreeDisplayId(tree.DisplayName), out var itemName)
                    && State.HasItem(itemName);
         }
 
         public bool IsSkillReceived(string treeDisplayId)
         {
             if (string.IsNullOrEmpty(treeDisplayId)) return false;
-            return _skillItemByTreeId.TryGetValue(treeDisplayId, out var itemName)
+            return _skillItemByTreeId.TryGetValue(
+                    NormalizeSkillTreeDisplayId(treeDisplayId), out var itemName)
                 && _receivedItemHashSet.Contains(itemName);
         }
 
@@ -1955,9 +2230,13 @@ namespace RubiniteAP
         public bool IsSkillPurchased(string treeDisplayId)
         {
             if (string.IsNullOrEmpty(treeDisplayId)) return false;
-            return _skillTreeLocIdByTreeId.TryGetValue(treeDisplayId, out var locId) 
+            return _skillTreeLocIdByTreeId.TryGetValue(
+                    NormalizeSkillTreeDisplayId(treeDisplayId), out var locId)
                 && State.HasChecked(locId);
         }
+
+        private static string NormalizeSkillTreeDisplayId(string treeDisplayId)
+            => GameData.NormalizeSkillTreeDisplayId(treeDisplayId);
 
         /// <summary>Write item ownership into game flags, without touching instantiated skills.</summary>
         private void ApplyToFlags(bool lockUnreceived)
@@ -2025,6 +2304,31 @@ namespace RubiniteAP
                     SetSkillFlags(tree, received, true);
                 }
             }
+        }
+
+        private void ApplySavedApEquippedTalismanFlags()
+        {
+            var talismanOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
+            if (talismanOverview == null)
+            {
+                AddLog("Could not restore AP talisman loadout: talisman data is unavailable.");
+                return;
+            }
+
+            var savedEquipped = new HashSet<string>(State.ApEquippedTalismans ?? new List<string>());
+            foreach (var talisman in talismanOverview.GetAllData())
+            {
+                if (talisman == null || talisman.isEquipped == null)
+                    continue;
+
+                bool shouldEquip = !string.IsNullOrEmpty(talisman.DisplayName)
+                    && savedEquipped.Contains(talisman.DisplayName)
+                    && IsReceivedTalisman(talisman);
+                talisman.isEquipped.SetValue(shouldEquip ? 1 : 0);
+            }
+
+            var core = GetGamePlayCore();
+            core?.equippedTalismanList?.Clear();
         }
 
         /// <summary>
@@ -2130,6 +2434,9 @@ namespace RubiniteAP
                 return;
             try
             {
+                if (_apLoadoutCaptureReady)
+                    PersistApProfilePreferences();
+
                 // Only reload flags from disk on the very first SetUp of a run.
                 // Doing it on every level load wipes dust the game accumulates
                 // during boss fights (dust is stored in GameSetting.dustFlag
@@ -2153,7 +2460,8 @@ namespace RubiniteAP
 
                 AddLog($"Dust in PrepareSaveFlags: current={GameSetting.Instance?.dustFlag?.GetValue()} pending={State.PendingDust} _flagsInitializedThisRun={_flagsInitializedThisRun}");
 
-                if (GameSetting.Instance != null)
+                bool hasSavedApSkin = ApplySavedApSkinFlags();
+                if (!hasSavedApSkin && GameSetting.Instance != null)
                 {
                     // Apply the chosen AP Color
                     // This directly updates the player's visual appearance
@@ -2171,38 +2479,13 @@ namespace RubiniteAP
                     }
                 }
 
-                if (_playerColorKey == "darkruby")
+                if (!hasSavedApSkin && _playerColorKey == "darkruby")
                 {
                     RubiniteAPPlugin.Instance.StartCoroutine(ApplyDarkRubySkinDelayed());
                 }
 
-                // Clear equipped talismans on start
-                if (!_flagsInitializedThisRun)
-                {
-                    var core = GetGamePlayCore();
-                    if (core != null && core.equippedTalismanList != null)
-                    {
-                        core.equippedTalismanList.Clear();
-                    }
-
-                    // Clear isEquipped flags on ALL talismans at run start, so stale flags
-                    // from previous runs don't leak through
-                    var talOverview = SingletonScriptableObject<TalismanDataOverview>.Instance;
-                    if (talOverview != null)
-                    {
-                        foreach (var tal in talOverview.GetAllData())
-                        {
-                            if (tal == null) continue;
-                            if (string.IsNullOrEmpty(tal.DisplayName)) continue;
-                            if (tal.DisplayName.Contains("Exhibition")) continue;
-                            if (tal.DisplayName.Contains("TalismanData_")) continue;
-                            if (tal.DisplayName == "X19_Shield" || tal.DisplayName == "無") continue;
-                            tal.isEquipped?.SetValue(0);
-                        }
-                    }
-                }
-
                 ApplyToFlags(true);
+                ApplySavedApEquippedTalismanFlags();
                 DataSaver.SaveFlag(DataSaver.path_saveFolder);
             }
             catch (Exception ex)
@@ -2791,60 +3074,52 @@ namespace RubiniteAP
             }
         }
 
-        public void HandleShopPurchase(string talismanTitle)
+        private bool TrySpendBloodDust(int price, string purchaseName)
         {
-            if (!ApRunActive) return;
-            
-            AddLog("Shop Purchase Attempt: '" + talismanTitle + "'");
-
-            if (_shopLocationIds.TryGetValue(talismanTitle, out long locId))
+            if (price < 0)
             {
-                var newIds = new List<long> { locId };
-                if (!State.HasChecked(locId))
-                {
-                    State.AddChecked(newIds);
-                    State.Save();
-                    if (Client.IsConnected) Client.SendLocationChecks(newIds);
-                    AddLog("Shop Check Sent: '" + talismanTitle + "' (ID: " + locId + ")");
-                }
-                else
-                {
-                    AddLog("Shop Check already checked: '" + talismanTitle + "'");
-                }
+                AddLog($"Purchase failed: Invalid negative Blood Dust price ({price}) for '{purchaseName}'.");
+                return false;
             }
-            else
-            {
-                AddLog("WARNING: No shop location found for '" + talismanTitle + "'");
-            }
-
-            ApplyRuntime(true);
+            if (price == 0) return true;
 
             var core = GetGamePlayCore();
-            if (core?.dust != null && GameSetting.Instance?.dustFlag != null 
-                && core.dust != GameSetting.Instance.dustFlag)
+            var settingsDust = GameSetting.Instance?.dustFlag;
+            if (core?.dust == null && settingsDust == null)
             {
-                GameSetting.Instance.dustFlag.SetValue(core.dust.GetValue(), "RubiniteAP");
+                AddLog($"Purchase failed: Blood Dust counter unavailable for '{purchaseName}'.");
+                return false;
             }
 
-            if (GameSetting.Instance?.dustFlag != null)
-                State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
-            State.Save();
-            
-            if (DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
+            var dustBefore = core?.dust != null
+                ? core.dust.GetValue()
+                : settingsDust.GetValue();
+            if (dustBefore < price)
             {
-                try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
-                catch (Exception ex) { AddLog("Could not persist dust after shop purchase: " + ex.Message); }
+                AddLog($"Purchase failed: Not enough Blood Dust ({dustBefore}/{price}) for '{purchaseName}'.");
+                return false;
             }
+
+            int dustAfter = dustBefore - price;
+            if (core?.dust != null)
+                core.dust.SetValue(dustAfter, "RubiniteAP Purchase");
+            if (settingsDust != null)
+                settingsDust.SetValue(dustAfter, "RubiniteAP");
+
+            AddLog($"Blood Dust cost: -{price} ({dustBefore} -> {dustAfter}) for '{purchaseName}'.");
+            return true;
         }
 
         public bool HandleSkillTreePurchase(string treeId, string title, int price)
         {
             if (!ApRunActive) return false;
 
-            var normalizedId = treeId.Replace('_', '-');
+            var normalizedTreeId = GameData.NormalizeSkillTreeDisplayId(treeId);
+            var normalizedId = normalizedTreeId.Replace('_', '-');
             var locName = "Skill Tree: " + normalizedId + ": " + title;
 
-            if (!_skillTreeLocationIds.TryGetValue(locName, out var locId))
+            if (!_skillTreeLocIdByTreeId.TryGetValue(normalizedTreeId, out var locId)
+                && !_skillTreeLocationIds.TryGetValue(locName, out locId))
             {
                 AddLog("WARNING: No skill tree location for '" + locName + "'");
                 return false;
@@ -2856,26 +3131,8 @@ namespace RubiniteAP
                 return true;
             }
 
-            var core = GetGamePlayCore();
-            if (core?.dust != null && price > 0)
-            {
-                int dustBefore = core.dust.GetValue();
-                
-                if (dustBefore < price)
-                {
-                    AddLog($"Purchase failed: Not enough dust ({dustBefore}/{price}) for '{locName}'");
-                    return false;
-                }
-
-                core.dust.SetValue(dustBefore - price, "RubiniteAP SkillTreePurchase");
-                AddLog($"Skill tree cost: -{price} ({dustBefore} -> {core.dust.GetValue()})");
-            }
-
-            if (core?.dust != null && GameSetting.Instance?.dustFlag != null
-                && core.dust != GameSetting.Instance.dustFlag)
-            {
-                GameSetting.Instance.dustFlag.SetValue(core.dust.GetValue(), "RubiniteAP");
-            }
+            if (!TrySpendBloodDust(price, locName))
+                return false;
 
             var ids = new List<long> { locId };
             State.AddChecked(ids);
@@ -2884,8 +3141,11 @@ namespace RubiniteAP
                 Client.SendLocationChecks(ids);
             AddLog("Skill tree check sent: '" + locName + "' (ID: " + locId + ")");
 
+            var core = GetGamePlayCore();
             if (GameSetting.Instance?.dustFlag != null)
                 State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
+            else if (core?.dust != null)
+                State.LastKnownDust = core.dust.GetValue();
             State.Save();
 
             if (DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
@@ -3432,6 +3692,10 @@ namespace RubiniteAP
                 || SceneManager.GetActiveScene().name == "TitleMenu"
                 || string.IsNullOrEmpty(_playerColorKey))
                 return;
+
+            if (ApplySavedApSkinSnapshot())
+                return;
+
             ApplySkinForColor(_playerColorKey);
         }
 
@@ -3470,7 +3734,7 @@ namespace RubiniteAP
                 return LoadCustomSprite("ap_icon_talisman.png", 0.5f);
             }
 
-            if (itemName.StartsWith("Boss Defeated:"))
+            if (itemName.StartsWith("Shop Expansion:"))
             {
                 return FindSpriteByName("ItemsIcon_2");
             }
@@ -3744,19 +4008,6 @@ namespace RubiniteAP
                 }
             }
             return null;
-        }
-
-        private void OnDataPackageReady()
-        {
-            if (!ApRunActive) return;
-
-            // DataPackage just arrived. Re-scout shop slots so previously
-            // unnamed cross-game items get their real names.
-            if (_shopLocationIds.Count > 0)
-            {
-                Client.RequestLocationScouts(_shopLocationIds.Values);
-                AddLog("Re-scouting " + _shopLocationIds.Count + " shop slots after DataPackage arrived.");
-            }
         }
 
         private void OnDeathLinkReceived(string source, string cause)
@@ -4395,24 +4646,59 @@ namespace RubiniteAP
                 : 0;
         }
 
-        public void HandleShopPurchaseById(long locId, string slotName)
+        public bool HandleShopPurchaseById(long locId, string slotName, int price)
         {
-            if (!ApRunActive) return;
+            if (!ApRunActive || locId <= 0) return false;
             AddLog($"Shop Purchase Attempt: '{slotName}' (ID: {locId})");
 
-            if (!State.HasChecked(locId))
+            if (!Client.IsConnected)
             {
-                State.AddChecked(new List<long> { locId });
-                State.Save();
-                if (Client.IsConnected) Client.SendLocationChecks(new List<long> { locId });
-                AddLog("Shop Check Sent: " + slotName);
-            }
-            else
-            {
-                AddLog("Shop Check already checked: " + slotName);
+                AddLog($"Shop purchase failed: AP connection is unavailable for '{slotName}'.");
+                return false;
             }
 
-            var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
+            if (State.HasChecked(locId))
+            {
+                AddLog("Shop check already checked: " + slotName);
+                HideShopSlot(slotName);
+                return false;
+            }
+
+            if (!TrySpendBloodDust(price, slotName))
+                return false;
+
+            var locationIds = new List<long> { locId };
+            State.AddChecked(locationIds);
+            State.Save();
+            Client.SendLocationChecks(locationIds);
+            AddLog("Shop check sent: " + slotName);
+
+            ApplyRuntime(true);
+
+            var core = GetGamePlayCore();
+            if (core?.dust != null && GameSetting.Instance?.dustFlag != null
+                && core.dust != GameSetting.Instance.dustFlag)
+                GameSetting.Instance.dustFlag.SetValue(core.dust.GetValue(), "RubiniteAP");
+
+            if (GameSetting.Instance?.dustFlag != null)
+                State.LastKnownDust = GameSetting.Instance.dustFlag.GetValue();
+            else if (core?.dust != null)
+                State.LastKnownDust = core.dust.GetValue();
+            State.Save();
+
+            if (DataSaver.currentSaveNumber == GameData.ChallengeSaveNumber)
+            {
+                try { DataSaver.SaveFlag(DataSaver.path_saveFolder); }
+                catch (Exception ex) { AddLog("Could not persist dust after shop purchase: " + ex.Message); }
+            }
+
+            HideShopSlot(slotName);
+            return true;
+        }
+
+        private void HideShopSlot(string slotName)
+        {
+            var menu = MenuCore.Instance?.currentMenu as CreateItemMenu;
             if (menu != null)
             {
                 string placeholderObjectName = null;
@@ -4430,7 +4716,6 @@ namespace RubiniteAP
                     }
                 }
             }
-            ApplyRuntime(true);
         }
     }
 

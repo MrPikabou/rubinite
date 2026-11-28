@@ -51,10 +51,25 @@ namespace RubiniteAP
 
         public static bool IsFreeSkill(string treeDisplayId)
         {
+            treeDisplayId = NormalizeSkillTreeDisplayId(treeDisplayId);
             if (string.IsNullOrEmpty(treeDisplayId)) return false;
             foreach (var id in FreeSkills)
                 if (id == treeDisplayId) return true;
             return false;
+        }
+
+        public static string NormalizeSkillTreeDisplayId(string treeDisplayId)
+            => string.IsNullOrEmpty(treeDisplayId) ? treeDisplayId : treeDisplayId.Replace('-', '_');
+
+        public static bool TryGetSkillTitle(string treeDisplayId, out string title)
+        {
+            treeDisplayId = NormalizeSkillTreeDisplayId(treeDisplayId);
+            if (string.IsNullOrEmpty(treeDisplayId))
+            {
+                title = null;
+                return false;
+            }
+            return SkillTitles.TryGetValue(treeDisplayId, out title);
         }
 
         public static readonly string[] Sigils =
@@ -136,6 +151,7 @@ namespace RubiniteAP
 
         public static string SkillItemName(string treeDisplayId)
         {
+            treeDisplayId = NormalizeSkillTreeDisplayId(treeDisplayId);
             if (string.IsNullOrEmpty(treeDisplayId))
                 return null;
             if (!SkillTitles.TryGetValue(treeDisplayId, out var title))

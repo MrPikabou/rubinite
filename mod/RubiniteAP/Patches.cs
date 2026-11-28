@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using HarmonyLib;
@@ -26,7 +27,12 @@ namespace RubiniteAP
         private static void Postfix()
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge == null || bridge.ApRunActive) return;
+            if (bridge == null) return;
+            if (bridge.ApRunActive)
+            {
+                bridge.RecordApSkinPreference();
+                return;
+            }
             bridge.RecordVanillaSkinPreference();
         }
     }
@@ -200,6 +206,13 @@ namespace RubiniteAP
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge != null && bridge.ApRunActive)
                 bridge.PrepareSaveFlags();
+        }
+
+        private static void Postfix()
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge != null && bridge.ApRunActive)
+                bridge.OnGamePlaySetUpCompleted();
         }
     }
 
@@ -411,9 +424,7 @@ namespace RubiniteAP
 
             if (__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
             {
-                int index = int.Parse(__instance.gameObject.name.Replace("AP_ExtraSlot_", ""));
-                if (__instance.talismanData?.state != null)
-                    __instance.talismanData.state.SetValue(AchievementState.Lock);
+                // Placeholder clones share their TalismanData asset with the template.
                 return;
             }
 
@@ -421,6 +432,11 @@ namespace RubiniteAP
                 return;
 
             var unlocked = bridge.IsShopTalismanUnlocked(__instance.talismanData.DisplayName);
+            long locationId = bridge.GetShopLocationIdForDisplayName(__instance.talismanData.DisplayName);
+            bool canPurchase = unlocked && locationId > 0 && !bridge.State.HasChecked(locationId);
+            if (canPurchase)
+                __instance.talismanData.storeState?.SetValue(AchievementState.ReadyToUnlock);
+            ShopSlotVisibility.SetPurchaseAvailable(__instance, canPurchase);
             ShopSlotVisibility.SetVisible(__instance, unlocked);
         }
     }
@@ -434,6 +450,13 @@ namespace RubiniteAP
             var grid = selection.GetComponentInParent<GridLayoutGroup>();
             var root = GetGridRoot(selection, grid != null ? grid.transform : null);
             root.gameObject.SetActive(visible);
+        }
+
+        public static void SetPurchaseAvailable(CreateTalismanSelection selection, bool available)
+        {
+            if (selection == null) return;
+            foreach (var button in selection.GetComponentsInChildren<Button>(true))
+                button.interactable = available;
         }
 
         public static Transform GetGridRoot(CreateTalismanSelection selection, Transform gridTransform)
@@ -455,6 +478,14 @@ namespace RubiniteAP
             if (bridge == null || !bridge.ApRunActive) return;
             var td = __instance.talismanData;
             if (td == null) return;
+
+            if (!__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
+            {
+                long locationId = bridge.GetShopLocationIdForDisplayName(td.DisplayName);
+                if (locationId > 0 && !bridge.State.HasChecked(locationId)
+                    && bridge.IsShopTalismanUnlocked(td.DisplayName))
+                    td.storeState?.SetValue(AchievementState.ReadyToUnlock);
+            }
 
             int effective = CreateTalismanClickPricePatch.GetEffectivePrice(__instance, bridge);
             if (effective != td.costDust)
@@ -486,13 +517,27 @@ namespace RubiniteAP
             if (talismanData == null) return;
             string displayName = talismanData.DisplayName;
 
+            long locationId = bridge.GetShopLocationIdForDisplayName(displayName);
+            if (locationId > 0 && bridge.State.HasChecked(locationId))
+            {
+                if (__state >= 0)
+                    CreateTalismanClickPricePatch.TrySetCostDust(talismanData, __state);
+                ShopSlotVisibility.SetPurchaseAvailable(__instance, false);
+                ShopSlotVisibility.SetVisible(__instance, false);
+                return;
+            }
+
             if (!bridge.IsShopTalismanUnlocked(displayName))
             {
                 if (__state >= 0)
                     CreateTalismanClickPricePatch.TrySetCostDust(talismanData, __state);
+                ShopSlotVisibility.SetPurchaseAvailable(__instance, false);
                 ShopSlotVisibility.SetVisible(__instance, false);
                 return;
             }
+            if (locationId > 0)
+                talismanData.storeState?.SetValue(AchievementState.ReadyToUnlock);
+            ShopSlotVisibility.SetPurchaseAvailable(__instance, locationId > 0);
             ShopSlotVisibility.SetVisible(__instance, true);
 
             if (string.IsNullOrEmpty(displayName)
@@ -521,7 +566,7 @@ namespace RubiniteAP
 
             if (bridge.TryGetScoutedShopItem(displayName, out var apItemName))
             {
-                ReplaceShopDisplay(__instance, displayName, apItemName);
+                ReplaceShopDisplay(__instance, displayName, apItemName, bridge);
             }
 
             if (__state >= 0 && __instance.talismanData != null)
@@ -530,8 +575,14 @@ namespace RubiniteAP
             }
         }
 
-        private static void ReplaceShopDisplay(CreateTalismanSelection selection, string talismanDisplayName, string apItemName)
+        internal static void ReplaceShopDisplay(
+            CreateTalismanSelection selection,
+            string talismanDisplayName,
+            string apItemName,
+            GameBridge bridge)
         {
+            if (selection == null || bridge == null) return;
+
             string displayName = apItemName;
             if (apItemName.StartsWith("Talisman: "))
             {
@@ -555,9 +606,8 @@ namespace RubiniteAP
             foreach (var img in selection.GetComponentsInChildren<UnityEngine.UI.Image>(true))
             {
                 if (img.gameObject.name != "Icon") continue;
-                var bridge = RubiniteAPPlugin.Instance?.Bridge;
                 bool isCrossGame = bridge.IsCrossGameShopItem(talismanDisplayName);
-                var sprite = bridge?.PickIconForItem(apItemName, isCrossGame);
+                var sprite = bridge.PickIconForItem(apItemName, isCrossGame);
                 if (sprite != null) img.sprite = sprite;
                 break;
             }
@@ -571,6 +621,16 @@ namespace RubiniteAP
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
+
+            var menu = MenuCore.Instance?.currentMenu as CreateItemMenu;
+            if (menu == null) return;
+            if (!CreateItemMenuEnterPatch.HasVisibleUnpurchasedSlots(menu, bridge))
+            {
+                ClearShopInformation(menu);
+                return;
+            }
+            if (!__instance.gameObject.activeInHierarchy)
+                return;
 
             string title;
             string description;
@@ -595,7 +655,7 @@ namespace RubiniteAP
                 {
                     title = $"Shop Slot {slotIndex + 1}";
                     description = "A replacement Archipelago shop slot. Purchase it to check this Wichiwi Shop location.";
-                    icon = bridge.PickIconForItem("Boss Defeated: Shop Slot");
+                    icon = bridge.PickIconForItem("Shop Expansion: Shop Slot");
                     notchCount = 0;
                 }
             }
@@ -616,9 +676,6 @@ namespace RubiniteAP
                     out title, out description, out icon, out notchCount)) return;
             }
 
-            var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
-            if (menu == null) return;
-
             // Cross-game items already contain the importance in their description.
             // Local items (talismans/sigils/skills) need it appended here.
             string finalDesc = description ?? "";
@@ -634,7 +691,10 @@ namespace RubiniteAP
             SetRubyText(menu, "informationExplainText", finalDesc);
 
             if (icon != null)
+            {
                 menu.SetTalismanInformationIcon(icon);
+                SetInformationIconVisible(menu, true);
+            }
 
             // Notches: show real count for talismans, hide all for other items
             if (menu.explainNotches != null)
@@ -644,6 +704,76 @@ namespace RubiniteAP
                     if (menu.explainNotches[i] != null)
                         menu.explainNotches[i].gameObject.SetActive(i < notchCount);
                 }
+            }
+        }
+
+        internal static void ClearShopInformation(CreateItemMenu menu)
+        {
+            if (menu == null) return;
+
+            SetRubyText(menu, "informationTitleText", "Shop is empty");
+            SetRubyText(menu, "informationExplainText", "All currently unlocked shop slots have been purchased.");
+            menu.SetTalismanInformationIcon((Sprite)null);
+            SetInformationIconVisible(menu, false);
+
+            if (menu.explainNotches == null) return;
+            foreach (var notch in menu.explainNotches)
+                if (notch != null)
+                    notch.gameObject.SetActive(false);
+        }
+
+        private static void SetInformationIconVisible(CreateItemMenu menu, bool visible)
+        {
+            const System.Reflection.BindingFlags flags =
+                System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Instance;
+
+            for (var type = menu.GetType(); type != null; type = type.BaseType)
+            {
+                foreach (var field in type.GetFields(flags))
+                {
+                    bool isIconField =
+                        field.Name.IndexOf("icon", StringComparison.OrdinalIgnoreCase) >= 0
+                        && (field.Name.IndexOf("information", StringComparison.OrdinalIgnoreCase) >= 0
+                            || field.Name.IndexOf("talisman", StringComparison.OrdinalIgnoreCase) >= 0);
+                    if (!isIconField
+                        || !typeof(UnityEngine.UI.Image).IsAssignableFrom(field.FieldType))
+                        continue;
+
+                    var image = field.GetValue(menu) as UnityEngine.UI.Image;
+                    if (image == null)
+                        continue;
+
+                    image.enabled = visible;
+                    image.gameObject.SetActive(visible);
+                    return;
+                }
+            }
+
+            foreach (var image in menu.GetComponentsInChildren<UnityEngine.UI.Image>(true))
+            {
+                if (image == null || image.gameObject.name.IndexOf(
+                    "icon", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                bool inInformationPanel = false;
+                for (var parent = image.transform; parent != null && parent != menu.transform; parent = parent.parent)
+                {
+                    if (parent.name.IndexOf("information", StringComparison.OrdinalIgnoreCase) >= 0
+                        || parent.name.IndexOf("talisman", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        inInformationPanel = true;
+                        break;
+                    }
+                }
+
+                if (!inInformationPanel)
+                    continue;
+
+                image.enabled = visible;
+                image.gameObject.SetActive(visible);
+                return;
             }
         }
 
@@ -664,15 +794,20 @@ namespace RubiniteAP
             if (uneditedField != null && uneditedField.FieldType == typeof(string))
             {
                 uneditedField.SetValue(target, value);
-                return;
+            }
+            else
+            {
+                var uneditedProp = targetType.GetProperty("uneditedText",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (uneditedProp != null && uneditedProp.CanWrite && uneditedProp.PropertyType == typeof(string))
+                    uneditedProp.SetValue(target, value);
             }
 
-            var uneditedProp = targetType.GetProperty("uneditedText",
-                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-            if (uneditedProp != null && uneditedProp.CanWrite && uneditedProp.PropertyType == typeof(string))
-            {
-                uneditedProp.SetValue(target, value);
-            }
+            var setText = targetType.GetMethod("SetText",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                null, new[] { typeof(string) }, null);
+            if (setText != null)
+                setText.Invoke(target, new object[] { value });
         }
     }
 
@@ -697,30 +832,44 @@ namespace RubiniteAP
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return true;
+
+            var objectName = __instance.gameObject.name;
+            if (objectName.StartsWith("AP_ExtraSlot_")
+                && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var slotIndex))
+            {
+                long locationId = bridge.GetShopLocationIdForIndex(slotIndex);
+                if (locationId <= 0)
+                {
+                    bridge.AddLog($"Shop purchase blocked: no AP location is mapped to slot {slotIndex + 1}.");
+                    return false;
+                }
+
+                int price = GetEffectivePrice(__instance, bridge);
+                bridge.HandleShopPurchaseById(locationId, $"Slot {slotIndex + 1}", price);
+                if (bridge.State.HasChecked(locationId))
+                {
+                    ShopSlotVisibility.SetVisible(__instance, false);
+                    CreateItemMenuEnterPatch.ClearInformationIfNoVisibleSlots(
+                        MenuCore.Instance?.currentMenu as CreateItemMenu);
+                }
+                return false;
+            }
+
             if (__instance.talismanData == null) return true;
 
             string displayName = __instance.talismanData.DisplayName;
-            
-            // If this is an AP run and the location check hasn't been sent yet,
-            // bypass vanilla logic (which might block the purchase if we already own it).
-            if (bridge.TryGetShopSlotIndex(displayName, out _))
+            long locId = bridge.GetShopLocationIdForDisplayName(displayName);
+            if (locId <= 0) return true;
+
+            int effectivePrice = GetEffectivePrice(__instance, bridge);
+            bridge.HandleShopPurchaseById(locId, displayName, effectivePrice);
+            if (bridge.State.HasChecked(locId))
             {
-                long locId = bridge.GetShopLocationIdForDisplayName(displayName);
-                if (locId > 0 && !bridge.State.HasChecked(locId))
-                {
-                    bridge.HandleShopPurchase(displayName);
-                    return false;
-                }
+                ShopSlotVisibility.SetVisible(__instance, false);
+                CreateItemMenuEnterPatch.ClearInformationIfNoVisibleSlots(
+                    MenuCore.Instance?.currentMenu as CreateItemMenu);
             }
-
-            return true;
-        }
-
-        private static void Postfix(CreateTalismanSelection __instance, int __state)
-        {
-            if (__state < 0) return;
-            if (__instance.talismanData != null)
-                TrySetCostDust(__instance.talismanData, __state);
+            return false;
         }
 
         internal static int GetEffectivePrice(CreateTalismanSelection selection, GameBridge bridge)
@@ -801,40 +950,85 @@ namespace RubiniteAP
 
             if (bridge == null || !bridge.ApRunActive)
             {
-                var vanillaIcon = __instance.skillData?.Icon;
-                if (vanillaIcon != null)
-                {
-                    if (__instance.icon != null) { __instance.icon.sprite = vanillaIcon; __instance.icon.rectTransform.localScale = Vector3.one; }
-                    if (__instance.fakeIcon != null) { __instance.fakeIcon.sprite = vanillaIcon; __instance.fakeIcon.rectTransform.localScale = Vector3.one; }
-                }
+                ApplyVanillaIcon(__instance, bridge);
                 return;
             }
 
-            // Only revert to vanilla if the CHECK is purchased.
-            bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
-            bool hasScoutedItem = bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName);
-
-            if (isPurchased || !hasScoutedItem)
+            if (bridge.IsSkillPurchased(data.DisplayName)
+                || !data.isKnown.GetValue()
+                || !__instance.IsKnowable()
+                || !bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName))
             {
-                if (__instance.icon != null) __instance.icon.rectTransform.localScale = Vector3.one;
-                if (__instance.fakeIcon != null) __instance.fakeIcon.rectTransform.localScale = Vector3.one;
+                ApplyVanillaIcon(__instance, bridge);
                 return;
             }
+
+            ApplyItemIcon(__instance, bridge, apItemName);
+        }
+
+        internal static void ApplyItemIcon(SkillTreeFrame frame, GameBridge bridge, string apItemName)
+        {
+            if (frame == null || bridge == null || string.IsNullOrEmpty(apItemName))
+                return;
 
             var apIcon = bridge.PickIconForItem(apItemName);
             if (apIcon == null) return;
 
             Vector3 scaled = apItemName.StartsWith("Skill ") ? Vector3.one : new Vector3(0.65f, 0.65f, 1f);
-
-            if (__instance.icon != null) 
+            if (frame.icon != null)
             {
-                __instance.icon.sprite = apIcon;
-                __instance.icon.rectTransform.localScale = scaled;
+                frame.icon.sprite = apIcon;
+                frame.icon.rectTransform.localScale = scaled;
             }
-            if (__instance.fakeIcon != null) 
+            if (frame.fakeIcon != null)
             {
-                __instance.fakeIcon.sprite = apIcon;
-                __instance.fakeIcon.rectTransform.localScale = scaled;
+                frame.fakeIcon.sprite = apIcon;
+                frame.fakeIcon.rectTransform.localScale = scaled;
+            }
+        }
+
+        internal static void ApplyVanillaIcon(SkillTreeFrame frame, GameBridge bridge)
+        {
+            if (frame == null) return;
+
+            var vanillaIcon = frame.skillData?.Icon;
+            if (vanillaIcon == null && bridge != null && frame.skillTreeData != null)
+            {
+                var vanillaItemName = GameData.SkillItemName(frame.skillTreeData.DisplayName);
+                vanillaIcon = bridge.PickIconForItem(vanillaItemName);
+            }
+            if (vanillaIcon == null) return;
+
+            if (frame.icon != null)
+            {
+                frame.icon.sprite = vanillaIcon;
+                frame.icon.rectTransform.localScale = Vector3.one;
+            }
+            if (frame.fakeIcon != null)
+            {
+                frame.fakeIcon.sprite = vanillaIcon;
+                frame.fakeIcon.rectTransform.localScale = Vector3.one;
+            }
+        }
+
+        internal static void RefreshScoutedIcon(GameBridge bridge, string treeDisplayId, string apItemName)
+        {
+            if (bridge == null || string.IsNullOrEmpty(treeDisplayId))
+                return;
+
+            foreach (var frame in Resources.FindObjectsOfTypeAll<SkillTreeFrame>())
+            {
+                if (frame == null || !frame.gameObject.scene.IsValid()
+                    || !frame.gameObject.activeInHierarchy
+                    || frame.skillTreeData?.DisplayName != treeDisplayId)
+                    continue;
+
+                if (bridge.IsSkillPurchased(treeDisplayId)
+                    || !frame.skillTreeData.isKnown.GetValue()
+                    || !frame.IsKnowable())
+                    ApplyVanillaIcon(frame, bridge);
+                else
+                    ApplyItemIcon(frame, bridge, apItemName);
             }
         }
     }
@@ -846,16 +1040,29 @@ namespace RubiniteAP
         {
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
+            bridge.RequestVisibleSkillTreeHints(GetVisibleSkillTreeIds());
             if (skillTreeFrame == null) return;
 
             var data = skillTreeFrame.skillTreeData;
             if (data == null) return;
 
-            bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
             bool isUnknown = !data.isKnown.GetValue() || !skillTreeFrame.IsKnowable();
+            if (isUnknown)
+            {
+                if (__instance.selectedIcon != null)
+                    __instance.selectedIcon.rectTransform.localScale = Vector3.one;
+                return;
+            }
+
+            if (bridge.IsSkillPurchased(data.DisplayName))
+            {
+                EnsureVanillaSkillIcon(__instance, skillTreeFrame);
+                return;
+            }
+
             bool hasScoutedItem = bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName);
 
-            if (isPurchased || isUnknown || !hasScoutedItem)
+            if (!hasScoutedItem)
             {
                 if (__instance.selectedIcon != null) __instance.selectedIcon.rectTransform.localScale = Vector3.one;
                 return;
@@ -875,20 +1082,11 @@ namespace RubiniteAP
 
             __instance.selectedTitleText.uneditedText = apTitle;
 
-            // If cross-game, description already contains the importance.
-            // Otherwise (local skill), append importance explicitly.
-            string combined;
-            if (bridge.IsCrossGameShopItem(data.DisplayName))
-            {
-                combined = $"You will receive: <b>{apItemName}</b>\n\n{apDesc}";
-            }
-            else
-            {
-                string importance = bridge.GetImportanceDisplay(apItemName, data.DisplayName);
-                combined = $"You will receive: <b>{apItemName}</b>\n"
-                        + $"Importance: {importance}\n\n"
-                        + (apDesc ?? "");
-            }
+            string importance = bridge.GetImportanceDisplay(apItemName, data.DisplayName);
+            string itemDescription = bridge.IsCrossGameShopItem(data.DisplayName)
+                ? "An item from another world."
+                : apDesc ?? "";
+            string combined = $"You will receive: <b>{apItemName}</b> [{importance}]\n{itemDescription}";
 
             __instance.selectedDescriptionText_NoVideo?.SetText(combined);
             __instance.selectedDescriptionText_HasVideo?.SetText(combined);
@@ -905,6 +1103,61 @@ namespace RubiniteAP
                 __instance.selectedIcon.rectTransform.localScale = new Vector3(0.8f, 0.8f, 1f);
             }
         }
+
+        internal static void RefreshPurchasedItemDetails(SkillTreeFrame frame, GameBridge bridge)
+        {
+            var menu = MenuCore.Instance?.currentMenu as SkillTreeMenu;
+            if (menu == null || frame?.skillTreeData == null
+                || bridge == null
+                || !bridge.IsSkillPurchased(frame.skillTreeData.DisplayName))
+                return;
+
+            menu.SetSelectFrameDetailPaper(frame);
+        }
+
+        private static void EnsureVanillaSkillIcon(SkillTreeMenu menu, SkillTreeFrame frame)
+        {
+            var vanillaIcon = frame.skillData?.Icon;
+            if (vanillaIcon != null && menu.selectedIcon != null)
+            {
+                menu.selectedIcon.sprite = vanillaIcon;
+                menu.selectedIcon.rectTransform.localScale = new Vector3(0.8f, 0.8f, 1f);
+            }
+        }
+
+        private static IEnumerable<string> GetVisibleSkillTreeIds()
+        {
+            foreach (var frame in Resources.FindObjectsOfTypeAll<SkillTreeFrame>())
+            {
+                if (frame == null || !frame.gameObject.scene.IsValid() || !frame.gameObject.activeInHierarchy)
+                    continue;
+
+                var data = frame.skillTreeData;
+                if (data != null && data.isKnown.GetValue() && frame.IsKnowable())
+                    yield return data.DisplayName;
+            }
+        }
+
+        internal static IEnumerable<string> GetVisibleSkillTreeIdsForHintRequest()
+        {
+            return GetVisibleSkillTreeIds();
+        }
+    }
+
+    [HarmonyPatch(typeof(SkillTreeData), "get_cost")]
+    internal static class SkillTreeEffectiveCostPatch
+    {
+        private static bool Prefix(SkillTreeData __instance, ref int __result)
+        {
+            var bridge = RubiniteAPPlugin.Instance?.Bridge;
+            if (bridge == null || !bridge.ApRunActive || __instance == null)
+                return true;
+
+            if (!bridge.TryGetEffectiveSkillPrice(__instance.DisplayName, out __result))
+                return true;
+
+            return false;
+        }
     }
 
     [HarmonyPatch(typeof(SkillTreeFrame), "Init")]
@@ -918,12 +1171,7 @@ namespace RubiniteAP
             var data = __instance.skillTreeData;
             if (data == null) return;
 
-            // Cost display override
-            int price = data.cost;
-            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var p))
-                price = p;
-
-            if (price != data.cost)
+            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var price))
             {
                 __instance.costText?.SetText(price.ToString());
                 __instance.costText2?.SetText(price.ToString());
@@ -933,6 +1181,14 @@ namespace RubiniteAP
             if (bridge.IsSkillPurchased(data.DisplayName))
             {
                 __instance.purchasableFrame?.SetActive(false);
+            }
+            else if (!GameData.IsFreeSkill(data.DisplayName)
+                && data.isKnown.GetValue()
+                && SkillTreeCheckUnlockablePatch.HasRequiredParentsPurchased(__instance, bridge))
+            {
+                __instance.purchasableFrame?.SetActive(true);
+                __instance.costText?.gameObject.SetActive(true);
+                __instance.costText2?.gameObject.SetActive(true);
             }
         }
     }
@@ -949,14 +1205,26 @@ namespace RubiniteAP
             if (data == null) return true;
             var treeId = data.DisplayName;
             if (string.IsNullOrEmpty(treeId)) return true;
-            if (!GameData.SkillTitles.TryGetValue(treeId, out var title)) return true;
+            if (!GameData.TryGetSkillTitle(treeId, out var title)) return true;
+
+            if (GameData.IsFreeSkill(treeId))
+                return true;
 
             if (bridge.IsSkillPurchased(treeId))
+                return false;
+
+            if (!SkillTreeCheckUnlockablePatch.HasRequiredParentsPurchased(__instance, bridge))
                 return false;
 
             int price = data.cost;
             if (bridge.TryGetEffectiveSkillPrice(treeId, out var effective))
                 price = effective;
+
+            if (!SkillTreeCheckUnlockablePatch.CanAffordSkillTreePurchase(__instance, bridge))
+            {
+                __instance.purchasableFrame?.SetActive(false);
+                return false;
+            }
 
             if (!bridge.HandleSkillTreePurchase(treeId, title, price))
                 return false;
@@ -971,6 +1239,8 @@ namespace RubiniteAP
 
             try { __instance.Init(); }
             catch { }
+            SkillTreeInitDisplayPatch.ApplyVanillaIcon(__instance, bridge);
+            SkillTreeMenuDetailPatch.RefreshPurchasedItemDetails(__instance, bridge);
 
             return false;
         }
@@ -979,45 +1249,25 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(SkillTreeFrame), "Update")]
     internal static class SkillTreeFrameUpdatePatch
     {
-        // Reflection, um den read-only Preis temporär zu überschreiben
-        private static readonly System.Reflection.FieldInfo _costBackingField = 
-            typeof(SkillTreeData).GetField("<cost>k__BackingField", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-
-        private static void SetSkillCost(SkillTreeData data, int newCost)
+        private static void Prefix(SkillTreeFrame __instance)
         {
-            if (_costBackingField != null)
-                _costBackingField.SetValue(data, newCost);
-        }
-
-        private static void Prefix(SkillTreeFrame __instance, out int __state)
-        {
-            __state = -1;
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return;
             var data = __instance.skillTreeData;
             if (data == null) return;
 
-            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var p) && p != data.cost)
-            {
-                __state = data.cost;
-                SetSkillCost(data, p); // Preis temporär überschreiben
-            }
-
             bool received = bridge.IsSkillReceived(data.DisplayName);
             bool purchased = bridge.IsSkillPurchased(data.DisplayName);
 
-            if (received && !purchased)
+            if (received && !purchased && !GameData.IsFreeSkill(data.DisplayName))
             {
                 data.skillTreeDataDetail?.isUnlocked?.SetValue(false);
                 data.secondRunSkillTreeDataDetail?.isUnlocked?.SetValue(false);
             }
         }
 
-        private static void Postfix(SkillTreeFrame __instance, int __state)
+        private static void Postfix(SkillTreeFrame __instance)
         {
-            if (__state >= 0 && __instance.skillTreeData != null)
-                SetSkillCost(__instance.skillTreeData, __state);
-
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             var data = __instance.skillTreeData;
             if (data == null) return;
@@ -1036,41 +1286,27 @@ namespace RubiniteAP
             bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
             bool isReceived = bridge.IsSkillReceived(data.DisplayName);
 
-            if (isPurchased)
+            if (!isPurchased
+                && data.isKnown.GetValue()
+                && SkillTreeCheckUnlockablePatch.HasRequiredParentsPurchased(__instance, bridge)
+                && bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName))
             {
-                var vanillaIcon = __instance.skillData?.Icon;
-                if (vanillaIcon != null)
-                {
-                    if (__instance.icon != null && __instance.icon.sprite != vanillaIcon)
-                    {
-                        __instance.icon.sprite = vanillaIcon;
-                        __instance.icon.rectTransform.localScale = Vector3.one;
-                    }
-                    if (__instance.fakeIcon != null && __instance.fakeIcon.sprite != vanillaIcon)
-                    {
-                        __instance.fakeIcon.sprite = vanillaIcon;
-                        __instance.fakeIcon.rectTransform.localScale = Vector3.one;
-                    }
-                }
+                SkillTreeInitDisplayPatch.ApplyItemIcon(__instance, bridge, apItemName);
             }
-            else if (bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName))
+            else
             {
-                var apIcon = bridge.PickIconForItem(apItemName);
-                if (apIcon != null)
-                {
-                    Vector3 scaled = apItemName.StartsWith("Skill ") ? Vector3.one : new Vector3(0.65f, 0.65f, 1f);
-                    
-                    if (__instance.icon != null && __instance.icon.sprite != apIcon)
-                    {
-                        __instance.icon.sprite = apIcon;
-                        __instance.icon.rectTransform.localScale = scaled;
-                    }
-                    if (__instance.fakeIcon != null && __instance.fakeIcon.sprite != apIcon)
-                    {
-                        __instance.fakeIcon.sprite = apIcon;
-                        __instance.fakeIcon.rectTransform.localScale = scaled;
-                    }
-                }
+                SkillTreeInitDisplayPatch.ApplyVanillaIcon(__instance, bridge);
+            }
+
+            if (GameData.IsFreeSkill(data.DisplayName))
+                return;
+
+            if (!isPurchased
+                && data.isKnown.GetValue()
+                && SkillTreeCheckUnlockablePatch.HasRequiredParentsPurchased(__instance, bridge))
+            {
+                __instance.costText?.gameObject.SetActive(true);
+                __instance.costText2?.gameObject.SetActive(true);
             }
 
             var currentAnim = __instance.animatorController.currentAnimation;
@@ -1097,24 +1333,12 @@ namespace RubiniteAP
             }
             else
             {
-                bool unlockable = true;
-                for (int i = 0; i < __instance.needUnlocked.Length; i++)
-                {
-                    var parentData = __instance.needUnlocked[i].skillTreeData;
-                    if (parentData == null) continue;
+                bool prerequisitesMet =
+                    SkillTreeCheckUnlockablePatch.HasRequiredParentsPurchased(__instance, bridge);
 
-                    bool parentVanillaUnlocked = parentData.isUnlocked != null && parentData.isUnlocked.GetValue();
-                    bool parentPurchased = bridge.IsSkillPurchased(parentData.DisplayName);
-                    bool parentReceived = bridge.IsSkillReceived(parentData.DisplayName);
+                __instance.purchasableFrame?.SetActive(prerequisitesMet);
 
-                    if (!parentVanillaUnlocked && !parentPurchased && !parentReceived)
-                    {
-                        unlockable = false;
-                        break;
-                    }
-                }
-
-                if (unlockable)
+                if (prerequisitesMet)
                 {
                     if (currentAnim == SkillTreeFrame.SkillTreeFrameAnimationType.Disable)
                         targetAnim = SkillTreeFrame.SkillTreeFrameAnimationType.Lock;
@@ -1141,26 +1365,73 @@ namespace RubiniteAP
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
             if (bridge == null || !bridge.ApRunActive) return true;
 
-            for (int i = 0; i < __instance.needUnlocked.Length; i++)
+            if (GameData.IsFreeSkill(__instance.skillTreeData?.DisplayName))
             {
-                var parent = __instance.needUnlocked[i];
+                __result = true;
+                return false;
+            }
+
+            if (!HasRequiredParentsPurchased(__instance, bridge))
+            {
+                __result = false;
+                return false;
+            }
+
+            __result = CanAffordSkillTreePurchase(__instance, bridge);
+            return false;
+        }
+
+        internal static bool HasRequiredParentsPurchased(SkillTreeFrame frame, GameBridge bridge)
+        {
+            if (frame == null || bridge == null)
+                return false;
+
+            var parents = frame.needUnlocked;
+            if (parents == null)
+                return true;
+
+            for (int i = 0; i < parents.Length; i++)
+            {
+                var parent = parents[i];
                 if (parent == null) continue;
                 var parentData = parent.skillTreeData;
                 if (parentData == null) continue;
 
-                bool parentVanillaUnlocked = parentData.isUnlocked != null && parentData.isUnlocked.GetValue();
+                bool parentFree = GameData.IsFreeSkill(parentData.DisplayName);
                 bool parentPurchased = bridge.IsSkillPurchased(parentData.DisplayName);
-                bool parentReceived = bridge.IsSkillReceived(parentData.DisplayName);
 
-                if (!parentVanillaUnlocked && !parentPurchased && !parentReceived)
-                {
-                    __result = false;
+                if (!parentFree && !parentPurchased)
                     return false;
-                }
             }
 
-            __result = true;
-            return false;
+            return true;
+        }
+
+        internal static bool CanAffordSkillTreePurchase(SkillTreeFrame frame, GameBridge bridge)
+        {
+            var data = frame?.skillTreeData;
+            if (data == null || bridge == null)
+                return false;
+
+            int price = data.cost;
+            if (bridge.TryGetEffectiveSkillPrice(data.DisplayName, out var effectivePrice))
+                price = effectivePrice;
+
+            var core = GameBridge.GetGamePlayCore();
+            var settingsDust = GameSetting.Instance?.dustFlag;
+            if (core?.dust == null && settingsDust == null)
+                return false;
+
+            int availableDust = core?.dust != null
+                ? core.dust.GetValue()
+                : settingsDust.GetValue();
+            if (price < 0)
+                return false;
+
+            if (availableDust < price)
+                return false;
+
+            return true;
         }
     }
 
@@ -1179,6 +1450,16 @@ namespace RubiniteAP
             if (bridge.IsSkillPurchased(data.DisplayName))
             {
                 __instance.purchasableFrame?.SetActive(false);
+                SkillTreeInitDisplayPatch.ApplyVanillaIcon(__instance, bridge);
+                SkillTreeMenuDetailPatch.RefreshPurchasedItemDetails(__instance, bridge);
+                return;
+            }
+
+            if (!GameData.IsFreeSkill(data.DisplayName))
+            {
+                bool prerequisitesMet =
+                    SkillTreeCheckUnlockablePatch.HasRequiredParentsPurchased(__instance, bridge);
+                __instance.purchasableFrame?.SetActive(prerequisitesMet);
             }
         }
     }
@@ -1739,21 +2020,24 @@ namespace RubiniteAP
                     if (int.TryParse(indexText, out var slotIndex))
                     {
                         ConfigurePlaceholder(selection, slotIndex, bridge);
-                        var locationId = bridge.GetShopLocationIdForIndex(slotIndex);
-                        if (locationId > 0) mappedEntries++;
-                        if (locationId > 0 && bridge.State.HasChecked(locationId))
+                        var extraLocationId = bridge.GetShopLocationIdForIndex(slotIndex);
+                        if (extraLocationId > 0) mappedEntries++;
+                        if (extraLocationId > 0 && bridge.State.HasChecked(extraLocationId))
                         {
                             checkedEntries++;
+                            ShopSlotVisibility.SetPurchaseAvailable(selection, false);
                             ShopSlotVisibility.SetVisible(selection, false);
                         }
                         else if (slotIndex < unlockedSlots)
                         {
                             visibleEntries++;
+                            ShopSlotVisibility.SetPurchaseAvailable(selection, extraLocationId > 0);
                             ShopSlotVisibility.SetVisible(selection, true);
                         }
                         else
                         {
                             lockedEntries++;
+                            ShopSlotVisibility.SetPurchaseAvailable(selection, false);
                             ShopSlotVisibility.SetVisible(selection, false);
                         }
                     }
@@ -1763,22 +2047,39 @@ namespace RubiniteAP
                 if (selection.talismanData == null) continue;
 
                 var displayName = selection.talismanData.DisplayName;
+                if (bridge.TryGetScoutedShopItem(displayName, out var apItemName))
+                    CreateTalismanSetupPatch.ReplaceShopDisplay(
+                        selection, displayName, apItemName, bridge);
+
                 if (bridge.TryGetShopSlotIndex(displayName, out _))
                     mappedEntries++;
                 else if (unmappedNames.Count < 5)
                     unmappedNames.Add(displayName);
 
-                if (bridge.IsShopTalismanUnlocked(displayName))
+                var locationId = bridge.GetShopLocationIdForDisplayName(displayName);
+                if (locationId > 0 && bridge.State.HasChecked(locationId))
+                {
+                    checkedEntries++;
+                    ShopSlotVisibility.SetPurchaseAvailable(selection, false);
+                    ShopSlotVisibility.SetVisible(selection, false);
+                }
+                else if (bridge.IsShopTalismanUnlocked(displayName))
                 {
                     visibleEntries++;
+                    ShopSlotVisibility.SetPurchaseAvailable(selection, locationId > 0);
                     ShopSlotVisibility.SetVisible(selection, true);
                 }
                 else
                 {
                     lockedEntries++;
+                    ShopSlotVisibility.SetPurchaseAvailable(selection, false);
                     ShopSlotVisibility.SetVisible(selection, false);
                 }
             }
+
+            bridge.RequestVisibleShopHints(unlockedSlots);
+            if (visibleEntries == 0)
+                CreateTalismanSetInformationPatch.ClearShopInformation(menu);
 
             var unmappedText = unmappedNames.Count == 0
                 ? ""
@@ -1787,6 +2088,84 @@ namespace RubiniteAP
                 $"{checkedEntries} checked hidden, {mappedEntries} mapped across " +
                 $"{visibleEntries + lockedEntries + checkedEntries} entries " +
                 $"(unlocked limit {unlockedSlots}){unmappedText}.");
+        }
+
+        internal static void ClearInformationIfNoVisibleSlots(CreateItemMenu menu)
+        {
+            if (menu == null) return;
+
+            foreach (var selection in menu.GetComponentsInChildren<CreateTalismanSelection>(true))
+                if (selection != null && selection.gameObject.activeInHierarchy)
+                    return;
+
+            CreateTalismanSetInformationPatch.ClearShopInformation(menu);
+        }
+
+        internal static bool HasVisibleUnpurchasedSlots(CreateItemMenu menu, GameBridge bridge)
+        {
+            if (menu == null || bridge == null || !bridge.ApRunActive)
+                return false;
+
+            var unlockedSlots = bridge.GetUnlockedShopSlotCount();
+            foreach (var selection in menu.GetComponentsInChildren<CreateTalismanSelection>(true))
+            {
+                if (selection == null)
+                    continue;
+
+                var objectName = selection.gameObject.name;
+                if (objectName.StartsWith("AP_ExtraSlot_")
+                    && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var slotIndex))
+                {
+                    var locationId = bridge.GetShopLocationIdForIndex(slotIndex);
+                    if (slotIndex < unlockedSlots
+                        && locationId > 0
+                        && !bridge.State.HasChecked(locationId))
+                        return true;
+                    continue;
+                }
+
+                var displayName = selection.talismanData?.DisplayName;
+                if (string.IsNullOrEmpty(displayName)
+                    || !bridge.IsShopTalismanUnlocked(displayName))
+                    continue;
+
+                var locationIdForTalisman = bridge.GetShopLocationIdForDisplayName(displayName);
+                if (locationIdForTalisman > 0
+                    && !bridge.State.HasChecked(locationIdForTalisman))
+                    return true;
+            }
+
+            return false;
+        }
+
+        internal static void RefreshScoutedShopIcon(GameBridge bridge, long locationId)
+        {
+            if (bridge == null || locationId <= 0)
+                return;
+
+            foreach (var selection in Resources.FindObjectsOfTypeAll<CreateTalismanSelection>())
+            {
+                if (selection == null || !selection.gameObject.scene.IsValid())
+                    continue;
+
+                var objectName = selection.gameObject.name;
+                if (objectName.StartsWith("AP_ExtraSlot_")
+                    && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var slotIndex))
+                {
+                    if (bridge.GetShopLocationIdForIndex(slotIndex) == locationId)
+                        ConfigurePlaceholder(selection, slotIndex, bridge);
+                    continue;
+                }
+
+                var displayName = selection.talismanData?.DisplayName;
+                if (string.IsNullOrEmpty(displayName)
+                    || bridge.GetShopLocationIdForDisplayName(displayName) != locationId
+                    || !bridge.TryGetScoutedShopItem(displayName, out var apItemName))
+                    continue;
+
+                CreateTalismanSetupPatch.ReplaceShopDisplay(
+                    selection, displayName, apItemName, bridge);
+            }
         }
 
         internal static void ConfigurePlaceholder(
@@ -1809,6 +2188,13 @@ namespace RubiniteAP
                     slotItem,
                     bridge.IsCrossGameShopItem(slotTitle)) ?? icon;
             }
+
+            long locationId = bridge?.GetShopLocationIdForIndex(slotIndex) ?? 0;
+            bool canPurchase = bridge != null
+                && locationId > 0
+                && slotIndex < bridge.GetUnlockedShopSlotCount()
+                && !bridge.State.HasChecked(locationId);
+            ShopSlotVisibility.SetPurchaseAvailable(selection, canPurchase);
 
             foreach (var tmp in selection.GetComponentsInChildren<TMPro.TextMeshProUGUI>(true))
             {

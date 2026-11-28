@@ -161,11 +161,11 @@ def location_name(boss_name: str, suffix: str) -> str:
 
 
 def boss_clear_location_name(boss_key: str) -> str:
-    return f"{boss_key}: Boss Defeated"
+    return f"{boss_key}: Shop Expansion"
 
 
 def boss_clear_item_name(boss_key: str) -> str:
-    return f"Boss Defeated: {boss_key}"
+    return f"Shop Expansion: {boss_key}"
 
 
 def talisman_item_name(title: str) -> str:

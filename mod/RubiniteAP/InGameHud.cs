@@ -928,14 +928,14 @@ namespace RubiniteAP
         private static (string label, Color32 color) GetImportance(int flags, string itemName)
         {
             if (itemName.EndsWith(" Sigil") || itemName == "Shop Expansion")
-                return ("PROGRESSION", new Color32(255, 210, 100, 255));
+                return ("PROGRESSION", new Color32(149, 99, 0, 255));
             if (itemName.StartsWith("Skill ") || itemName.StartsWith("Talisman: "))
-                return ("USEFUL", new Color32(150, 200, 255, 255));
+                return ("USEFUL", new Color32(36, 95, 143, 255));
 
-            if ((flags & 1) != 0) return ("PROGRESSION", new Color32(255, 210, 100, 255));
-            if ((flags & 2) != 0) return ("USEFUL",     new Color32(150, 200, 255, 255));
-            if ((flags & 4) != 0) return ("TRAP",       new Color32(255, 100, 100, 255));
-            return                       ("FILLER",     new Color32(150, 150, 150, 255));
+            if ((flags & 1) != 0) return ("PROGRESSION", new Color32(149, 99, 0, 255));
+            if ((flags & 2) != 0) return ("USEFUL",     new Color32(36, 95, 143, 255));
+            if ((flags & 4) != 0) return ("TRAP",       new Color32(156, 45, 45, 255));
+            return                       ("FILLER",     new Color32(98, 98, 98, 255));
         }
 
         private void AddToast(string verb, string itemName, string sub, Sprite icon, int flags)

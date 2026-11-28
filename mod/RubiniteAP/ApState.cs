@@ -19,6 +19,11 @@ namespace RubiniteAP
         public int LastKnownDust = 0;
         public List<string> Items = new List<string>();
         public List<long> Checked = new List<long>();
+        public List<string> ApEquippedTalismans = new List<string>();
+        public string ApRubySkinId = "";
+        public string ApCurrentSkinId = "";
+        public bool ApHasCurrentSkinFlag;
+        public bool ApSkinPreferenceInitialized;
         public bool GoalSent;
         public bool ChallengeSaveInitialized;
 
@@ -50,6 +55,7 @@ namespace RubiniteAP
                         state.FilePath = path;
                         state.Items ??= new List<string>();
                         state.Checked ??= new List<long>();
+                        state.ApEquippedTalismans ??= new List<string>();
                         return state;
                     }
                 }
@@ -145,6 +151,11 @@ namespace RubiniteAP
             LastKnownDust = profile.LastKnownDust;
             Items = profile.Items ?? new List<string>();
             Checked = profile.Checked ?? new List<long>();
+            ApEquippedTalismans = profile.ApEquippedTalismans ?? new List<string>();
+            ApRubySkinId = profile.ApRubySkinId ?? "";
+            ApCurrentSkinId = profile.ApCurrentSkinId ?? "";
+            ApHasCurrentSkinFlag = profile.ApHasCurrentSkinFlag;
+            ApSkinPreferenceInitialized = profile.ApSkinPreferenceInitialized;
             GoalSent = profile.GoalSent;
             ChallengeSaveInitialized = profile.ChallengeSaveInitialized;
             LastDarkRubyFightTime = profile.LastDarkRubyFightTime;
@@ -189,6 +200,11 @@ namespace RubiniteAP
             LastItemIndex = 0;
             Items.Clear();
             Checked.Clear();
+            ApEquippedTalismans.Clear();
+            ApRubySkinId = "";
+            ApCurrentSkinId = "";
+            ApHasCurrentSkinFlag = false;
+            ApSkinPreferenceInitialized = false;
             GoalSent = false;
             PendingDust = 0;
             LastKnownDust = 0;

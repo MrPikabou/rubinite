@@ -60,6 +60,7 @@ namespace RubiniteAP
         private bool _deathLinkEnabled;
         private bool _dataPackageReceived;
         private List<long> _pendingScoutLocations;
+        private List<long> _pendingHintScoutLocations;
 
         private Dictionary<string, Dictionary<long, string>> _itemNamesByGame = new();
         private Dictionary<int, string> _gameBySlot = new();
@@ -102,6 +103,7 @@ namespace RubiniteAP
             _cts = new CancellationTokenSource();
             _dataPackageReceived = false;
             _pendingScoutLocations = null;
+            _pendingHintScoutLocations = null;
             _itemNamesByGame.Clear();
             _gameBySlot.Clear();
             _deathLinkEnabled = RubiniteAPPlugin.Instance.Settings.DeathLinkEnabled.Value;
@@ -564,7 +566,7 @@ namespace RubiniteAP
             _sendSignal.Dispose();
         }
 
-        public void RequestLocationScouts(IEnumerable<long> locations)
+        public void RequestLocationScouts(IEnumerable<long> locations, bool createAsHint = false)
         {
             var array = new JArray();
             foreach (var id in locations)
@@ -575,7 +577,7 @@ namespace RubiniteAP
             {
                 ["cmd"] = "LocationScouts",
                 ["locations"] = array,
-                ["create_as_hint"] = 0,
+                ["create_as_hint"] = createAsHint ? 1 : 0,
             });
         }
 
@@ -644,23 +646,30 @@ namespace RubiniteAP
                 _pendingScoutLocations = null;
                 RequestLocationScouts(pending);
             }
+            if (_pendingHintScoutLocations != null && _pendingHintScoutLocations.Count > 0)
+            {
+                var pending = _pendingHintScoutLocations;
+                _pendingHintScoutLocations = null;
+                RequestLocationScouts(pending, createAsHint: true);
+            }
         }
 
-        public void RequestLocationScoutsWhenReady(IEnumerable<long> locations)
+        public void RequestLocationScoutsWhenReady(IEnumerable<long> locations, bool createAsHint = false)
         {
             var list = new List<long>(locations);
             if (list.Count == 0) return;
 
             if (_dataPackageReceived)
             {
-                RequestLocationScouts(list);
+                RequestLocationScouts(list, createAsHint);
             }
             else
             {
-                if (_pendingScoutLocations == null)
-                    _pendingScoutLocations = new List<long>();
-                _pendingScoutLocations.AddRange(list);
-                int total = _pendingScoutLocations.Count;
+                var pending = createAsHint
+                    ? _pendingHintScoutLocations ?? (_pendingHintScoutLocations = new List<long>())
+                    : _pendingScoutLocations ?? (_pendingScoutLocations = new List<long>());
+                pending.AddRange(list);
+                int total = pending.Count;
                 Enqueue(() => LogLine("Queued " + list.Count + " scouts (" + total + " total) until DataPackage arrives."));
             }
         }
