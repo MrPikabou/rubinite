@@ -802,14 +802,12 @@ namespace RubiniteAP
                 int flags = _scoutedShopFlags.TryGetValue(talismanTitle, out var f) ? f : 0;
                 string kind;
                 string colorHex;
-                
-                // Determine the importance and its color
-                if ((flags & 1) != 0)      { kind = "Progression"; colorHex = "#FFD264"; } // Gold
-                else if ((flags & 2) != 0) { kind = "Useful";      colorHex = "#96C8FF"; } // Blue
-                else if ((flags & 4) != 0) { kind = "Trap";        colorHex = "#FF6464"; } // Red
-                else                       { kind = "Filler";      colorHex = "#969696"; } // Gray
 
-                // Format the description with the colored importance tag
+                if ((flags & 1) != 0)      { kind = "Progression"; colorHex = "#FFD264"; }
+                else if ((flags & 2) != 0) { kind = "Useful";      colorHex = "#96C8FF"; }
+                else if ((flags & 4) != 0) { kind = "Trap";        colorHex = "#FF6464"; }
+                else                       { kind = "Filler";      colorHex = "#707070"; }
+
                 description = $"An <color={colorHex}><b>{kind}</b></color> item from another world.";
                 icon = PickIconForItem(apItemName, isCrossGame: true);
                 return true;
@@ -886,26 +884,30 @@ namespace RubiniteAP
         {
             if (string.IsNullOrEmpty(itemName)) return "";
 
-            // Local Progression Items
             if (itemName.EndsWith(" Sigil") || itemName == "Shop Expansion")
                 return "<color=#FFD264><b>Progression</b></color>";
             
-            // Local Useful Items
             if (itemName.StartsWith("Skill ") || itemName.StartsWith("Talisman: "))
                 return "<color=#96C8FF><b>Useful</b></color>";
 
-            // Cross-game items (based on AP flags)
             if (_crossGameScoutedTitles.Contains(locationName))
             {
                 int flags = _scoutedShopFlags.TryGetValue(locationName, out var f) ? f : 0;
                 if ((flags & 1) != 0) return "<color=#FFD264><b>Progression (Other Player)</b></color>";
                 if ((flags & 2) != 0) return "<color=#96C8FF><b>Useful (Other Player)</b></color>";
                 if ((flags & 4) != 0) return "<color=#FF6464><b>Trap (Other Player)</b></color>";
-                return "<color=#969696><b>Filler (Other Player)</b></color>";
+                return "<color=#707070><b>Filler (Other Player)</b></color>";
             }
 
-            // Fallback (Local Filler)
-            return "<color=#969696><b>Filler</b></color>";
+            return "<color=#707070><b>Filler</b></color>";
+        }
+
+        public long GetShopLocationIdForDisplayName(string displayName)
+        {
+            if (_shopLocationIds.TryGetValue(displayName, out long id)) return id;
+            if (GameData.TalismanIds.TryGetValue(displayName, out var talismanId) 
+                && _shopLocationIds.TryGetValue(talismanId, out id)) return id;
+            return 0;
         }
 
         private bool IsShopGroupUnlocked(string talismanDisplayName)
@@ -1969,7 +1971,6 @@ namespace RubiniteAP
                     if (talisman == null || talisman.state == null)
                         continue;
 
-                    // Filter out placeholder items so they never appear in the shop
                     string displayName = talisman.DisplayName;
                     if (string.IsNullOrEmpty(displayName)
                         || displayName.Contains("Exhibition")
@@ -1983,38 +1984,21 @@ namespace RubiniteAP
                                     && State.HasChecked(locId);
                     bool groupUnlocked = IsShopGroupUnlocked(displayName);
 
-                    // Ownership (state) — can the player equip this?
                     if (received)
                         talisman.state.SetValue(AchievementState.Unlock);
                     else if (lockUnreceived)
                         talisman.state.SetValue(AchievementState.Lock);
 
                     // Shop visibility (storeState)
-                    // - Purchased → hide (already own it)
-                    // - Group locked → hide (Shop Expansion not received yet)
-                    // - Received → show as buyable (so they can still get the check)
-                    // - Otherwise → show as buyable
+                    // Always set to ReadyToUnlock if not purchased/locked, so the player can buy it even if they already own it.
                     if (isPurchased || !groupUnlocked)
                         talisman.storeState?.SetValue(AchievementState.Lock);
                     else
                         talisman.storeState?.SetValue(AchievementState.ReadyToUnlock);
 
-                    // Only keep isEquipped=1 if the talisman is received AND actually
-                    // lives in the runtime equipped list. Otherwise the UI will falsely
-                    // show it as equipped.
-                    bool inRuntime = false;
-                    if (received)
-                    {
-                        var core = GetGamePlayCore();
-                        if (core?.equippedTalismanList != null)
-                        {
-                            foreach (var t in core.equippedTalismanList)
-                            {
-                                if (t?.talismanData == talisman) { inRuntime = true; break; }
-                            }
-                        }
-                    }
-                    if (!received || !inRuntime)
+                    // If the player doesn't own the talisman, force it to unequip.
+                    // If they DO own it, DO NOT touch isEquipped. The game's save system handles it.
+                    if (!received)
                         talisman.isEquipped?.SetValue(0);
                 }
             }
@@ -2038,8 +2022,6 @@ namespace RubiniteAP
                         continue;
                     }
 
-                    // Strictly vanilla: isUnlocked is only true if the player
-                    // actually received the skill item from AP.
                     SetSkillFlags(tree, received, true);
                 }
             }

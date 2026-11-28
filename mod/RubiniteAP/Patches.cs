@@ -412,11 +412,6 @@ namespace RubiniteAP
             if (__instance.gameObject.name.StartsWith("AP_ExtraSlot_"))
             {
                 int index = int.Parse(__instance.gameObject.name.Replace("AP_ExtraSlot_", ""));
-                long locId = bridge.GetShopLocationIdForIndex(index);
-                if (locId > 0)
-                {
-                    bridge.HandleShopPurchaseById(locId, $"Slot {index + 1}");
-                }
                 if (__instance.talismanData?.state != null)
                     __instance.talismanData.state.SetValue(AchievementState.Lock);
                 return;
@@ -427,13 +422,6 @@ namespace RubiniteAP
 
             var unlocked = bridge.IsShopTalismanUnlocked(__instance.talismanData.DisplayName);
             ShopSlotVisibility.SetVisible(__instance, unlocked);
-            if (!unlocked) return;
-
-            if (bridge.ApRunActive)
-            {
-                bridge.HandleShopPurchase(__instance.talismanData.DisplayName);
-                __instance.talismanData.state.SetValue(AchievementState.Lock);
-            }
         }
     }
 
@@ -588,12 +576,17 @@ namespace RubiniteAP
             string description;
             Sprite icon;
             int notchCount;
+            string apItemName = null;
+            string displayName = null;
+
             var objectName = __instance.gameObject.name;
             if (objectName.StartsWith("AP_ExtraSlot_")
                 && int.TryParse(objectName.Substring("AP_ExtraSlot_".Length), out var slotIndex))
             {
                 if (bridge.TryGetScoutedShopItemForSlotIndex(slotIndex, out var slotTitle, out var slotItem))
                 {
+                    apItemName = slotItem;
+                    displayName = slotTitle;
                     if (!bridge.TryGetShopDescription(slotTitle, slotItem,
                         out title, out description, out icon, out notchCount))
                         return;
@@ -608,7 +601,7 @@ namespace RubiniteAP
             }
             else
             {
-                string displayName = __instance.talismanData?.DisplayName;
+                displayName = __instance.talismanData?.DisplayName;
                 if (string.IsNullOrEmpty(displayName)) return;
 
                 if (displayName.Contains("Exhibition")
@@ -618,7 +611,7 @@ namespace RubiniteAP
                     || displayName.Contains("展場"))
                     return;
 
-                if (!bridge.TryGetScoutedShopItem(displayName, out var apItemName)) return;
+                if (!bridge.TryGetScoutedShopItem(displayName, out apItemName)) return;
                 if (!bridge.TryGetShopDescription(displayName, apItemName,
                     out title, out description, out icon, out notchCount)) return;
             }
@@ -626,9 +619,19 @@ namespace RubiniteAP
             var menu = MenuCore.Instance.currentMenu as CreateItemMenu;
             if (menu == null) return;
 
-            // Set RubyTextMeshProUGUI fields via reflection (see SetRubyText below)
+            // Cross-game items already contain the importance in their description.
+            // Local items (talismans/sigils/skills) need it appended here.
+            string finalDesc = description ?? "";
+            bool isCrossGame = !string.IsNullOrEmpty(displayName)
+                            && bridge.IsCrossGameShopItem(displayName);
+            if (!isCrossGame && !string.IsNullOrEmpty(apItemName) && !string.IsNullOrEmpty(displayName))
+            {
+                string importance = bridge.GetImportanceDisplay(apItemName, displayName);
+                finalDesc = $"{finalDesc}\nImportance: {importance}";
+            }
+
             SetRubyText(menu, "informationTitleText", title);
-            SetRubyText(menu, "informationExplainText", description ?? "");
+            SetRubyText(menu, "informationExplainText", finalDesc);
 
             if (icon != null)
                 menu.SetTalismanInformationIcon(icon);
@@ -690,20 +693,27 @@ namespace RubiniteAP
     [HarmonyPatch(typeof(CreateTalismanSelection), "Click")]
     internal static class CreateTalismanClickPricePatch
     {
-        private static void Prefix(CreateTalismanSelection __instance, out int __state)
+        private static bool Prefix(CreateTalismanSelection __instance)
         {
-            __state = -1;
             var bridge = RubiniteAPPlugin.Instance?.Bridge;
-            if (bridge == null || !bridge.ApRunActive) return;
-            var td = __instance.talismanData;
-            if (td == null) return;
+            if (bridge == null || !bridge.ApRunActive) return true;
+            if (__instance.talismanData == null) return true;
 
-            int effective = CreateTalismanClickPricePatch.GetEffectivePrice(__instance, bridge);
-            if (effective == td.costDust) return;
+            string displayName = __instance.talismanData.DisplayName;
+            
+            // If this is an AP run and the location check hasn't been sent yet,
+            // bypass vanilla logic (which might block the purchase if we already own it).
+            if (bridge.TryGetShopSlotIndex(displayName, out _))
+            {
+                long locId = bridge.GetShopLocationIdForDisplayName(displayName);
+                if (locId > 0 && !bridge.State.HasChecked(locId))
+                {
+                    bridge.HandleShopPurchase(displayName);
+                    return false;
+                }
+            }
 
-            int original = td.costDust;
-            if (!TrySetCostDust(td, effective)) return;
-            __state = original;
+            return true;
         }
 
         private static void Postfix(CreateTalismanSelection __instance, int __state)
@@ -841,7 +851,6 @@ namespace RubiniteAP
             var data = skillTreeFrame.skillTreeData;
             if (data == null) return;
 
-            // Only revert to vanilla description if the CHECK is purchased.
             bool isPurchased = bridge.IsSkillPurchased(data.DisplayName);
             bool isUnknown = !data.isKnown.GetValue() || !skillTreeFrame.IsKnowable();
             bool hasScoutedItem = bridge.TryGetScoutedSkillTreeItem(data.DisplayName, out var apItemName);
@@ -864,14 +873,22 @@ namespace RubiniteAP
                 if (i != null) apIcon = i;
             }
 
-            string importance = bridge.GetImportanceDisplay(apItemName, data.DisplayName);
-
             __instance.selectedTitleText.uneditedText = apTitle;
 
-            var combined = "Buying this slot sends a location check to the multiworld.\n"
-                        + "You will receive: " + apItemName + "\n"
+            // If cross-game, description already contains the importance.
+            // Otherwise (local skill), append importance explicitly.
+            string combined;
+            if (bridge.IsCrossGameShopItem(data.DisplayName))
+            {
+                combined = $"You will receive: <b>{apItemName}</b>\n\n{apDesc}";
+            }
+            else
+            {
+                string importance = bridge.GetImportanceDisplay(apItemName, data.DisplayName);
+                combined = $"You will receive: <b>{apItemName}</b>\n"
                         + $"Importance: {importance}\n\n"
                         + (apDesc ?? "");
+            }
 
             __instance.selectedDescriptionText_NoVideo?.SetText(combined);
             __instance.selectedDescriptionText_HasVideo?.SetText(combined);
